@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+
+/input/
+/outputs/
+/.vscode
+/memory/
+/scripts/
+
+
+.env
+!.env.example

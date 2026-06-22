@@ -1,0 +1,49 @@
+{
+    "prompts":{
+        "default":{
+            "name":"默认学习用助手",
+            "description":"这是一个默认的学习用助手,只在最开始学习调试用",
+            "system":"你是一个简洁、准确的中文助手。"
+        },
+        "tool_agent":{
+            "name": "工具执行者",
+            "description": "根据用户问题和工具列表，选择最合适的工具，并且给出工具执行结果。",    
+            "system_file": "prompts/tool_agent.md"
+        },
+        "moduoluo":{
+            "name":"摩多罗模仿",
+            "description":"模仿摩多罗的说话风格来回答问题",
+            "system_file":"prompts/moduoluo.md"
+        },
+        "youyouzi":{
+            "name":"幽幽子模仿",
+            "description":"模仿幽幽子的说话风格来回答问题",
+            "system_file":"prompts/youyouzi.md"
+        },
+        "subagent":{
+            "name":"子代理",
+            "description":"当用户问题需要调用多个工具或者需要分步骤解决时，使用子代理来完成任务",
+            "system_file":"prompts/subagent.md"
+        },
+        "qq_memory_history":{
+            "name":"QQ历史检索节点",
+            "description":"根据提供的历史记录，检索是否需要补充信息来回答当前问题",
+            "system_file":"prompts/qq_memory_history.md"
+        },
+        "qq_memory_image":{
+            "name":"QQ图片分析节点",
+            "description":"根据提供的历史记录和当前问题，判断是否需要调用图片分析工具来补充信息",
+            "system_file":"prompts/qq_memory_image.md"
+        },
+        "qq_memory_update":{
+            "name":"QQ记忆更新节点",
+            "description":"根据当前问题和工具执行结果，判断是否需要更新记忆，并给出更新内容",
+            "system_file":"prompts/qq_memory_update.md"
+        },
+        "collapse_compact":{
+            "name":"历史上下文总结用",
+            "description":"上下文第二层压缩时使用",
+            "system_file":"prompts/collapse_compact.md"
+        }
+    }
+}

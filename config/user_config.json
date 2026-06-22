@@ -1,0 +1,13 @@
+{
+    "profiles":{
+        "deepseek":{
+            "model":"",
+            "base_url_env": ""
+        },
+        "qwen3.6":{
+            "model":"qwen3.6-27B",
+            "base_url_env":"QWEN36_BASE_URL",
+            "support_tools": true
+        }
+    }
+}
