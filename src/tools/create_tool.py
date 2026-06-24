@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import textwrap
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -11,22 +12,53 @@ def create_prompt_md(tool_name: str) -> str:
     return f"""# {tool_name}
 
 ## DESCRIPTION
-简短描述这个工具的功能。
+一句话描述这个工具的功能。
 ## PROMPT
+
+### WHEN_TO_USE
 当用户需要执行 `{tool_name}` 对应的能力时，使用这个工具。
-说明这个工具适合什么场景、不适合什么场景，以及关键限制。
+
+### WHEN_NOT_TO_USE
+说明这个工具不适合什么场景。
+
+### INPUT_RULES
+说明每个输入字段应该如何填写。
+
+### LIMITS
+说明工具限制、可能失败的原因，以及失败后模型应该怎么回答。
 """
 
-def create_tool_py(tool_name: str) -> str:
+def create_init_py() -> str:
+    return """from .tool import (
+    TOOL_NAME,
+    IS_READ_ONLY,
+    IS_DESTRUCTIVE,
+    InputSchema,
+    OutputSchema,
+    get_input_schema,
+    get_output_schema,
+    validate_input,
+    check_permissions,
+    summarize_input,
+    call,
+    render_result_for_llm,
+)
+"""
+
+def create_tool_py(tool_name: str, destructive: bool = False) -> str:
+    is_read_only = "False" if destructive else "True"
+    is_destructive = "True" if destructive else "False"
+
     return f'''from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-
 TOOL_NAME = "{tool_name}"
-IS_READ_ONLY = True
 TOOL_DIR = Path(__file__).resolve().parent
 
+IS_READ_ONLY = {is_read_only}
+IS_DESTRUCTIVE = {is_destructive}
+MAX_RESULT_CHARS = 10000
 
 class InputSchema(BaseModel):
     placeholder: str = Field(description="TODO: 描述输入字段")
@@ -44,12 +76,39 @@ def get_output_schema() -> dict:
     return OutputSchema.model_json_schema()
     
 def validate_input(**kwargs) -> tuple[bool, str]:
+
     try:
         InputSchema(**kwargs)
     except Exception as e:
         return False, str(e)
 
     return True, ""
+
+def check_permissions(**kwargs) -> tuple[bool, str]:
+    """
+    工具级权限检查。
+    """
+    if IS_DESTRUCTIVE:
+        return True, ""
+
+    return True, ""
+
+def summarize_input(**kwargs) -> str:
+    """
+    给日志、调试、模型中间态看的简短描述。
+    """
+    try:
+        input_data = InputSchema(**kwargs)
+    except ValidationError:
+        return f"{{TOOL_NAME}} input invalid"
+
+    return f"Run {{TOOL_NAME}} with {{input_data.model_dump()}}"
+
+def truncate_text(text: str, max_chars: int = MAX_RESULT_CHARS) -> tuple[str, bool]:
+    if len(text) <= max_chars:
+        return text, False
+
+    return text[:max_chars], True
 
 
 def call(**kwargs) -> dict:
@@ -61,19 +120,48 @@ def call(**kwargs) -> dict:
             data=None,
         ).model_dump()
 
-    return OutputSchema(
-        ok=True,
-        error="",
-        data=None,
-    ).model_dump()
+    allowed, permission_error = check_permissions(**kwargs)
+
+    if not allowed:
+        return OutputSchema(
+            ok=False,
+            error=permission_error,
+            data=None,
+        ).model_dump()
+
+    try:
+        input_data = InputSchema(**kwargs)
+
+        # TODO: 在这里实现工具逻辑。
+        
+        result_data = {{
+            "input": input_data.model_dump(),
+            "message": "TODO: implement tool logic",
+        }}
+
+        return OutputSchema(
+            ok=True,
+            error="",
+            data=result_data,
+        ).model_dump()
+        
+    except Exception as e:
+        return OutputSchema(
+            ok=False,
+            error=str(e),
+            data=None,
+        ).model_dump()
 
 def render_result_for_llm(result: dict) -> str:
+    """
+    把结构化结果转换成模型可读文本。
+    """
     output = OutputSchema(**result)
 
     if not output.ok:
-        return f"工具执行失败：{{output.error}}"
+        return f"{{TOOL_NAME}}工具执行失败：{{output.error}}"
 
-    return f"工具执行成功：{{output.data}}"
+    return f"{{TOOL_NAME}}工具执行成功：{{output.data}}"
 '''
 
 def main() -> None:
