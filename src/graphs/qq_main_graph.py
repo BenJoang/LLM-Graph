@@ -50,17 +50,6 @@ def make_initial_state(group_id: str, question: str) -> ToolAgentState:
     }
 
 
-profile = load_profile("qwen3.6")
-
-uuz_prompt = load_prompt("youyouzi")
-
-history_prompt = load_prompt("qq_memory_history")
-image_prompt = load_prompt("qq_memory_image")
-
-llm = build_chat_model(profile, temperature=0)
-
-chat_llm = build_chat_model(profile, temperature=1.5)
-
 HISTORY_TOOL_NAMES = [
     "qq_memory_search",
     "memory_search"
@@ -71,76 +60,9 @@ IMAGE_TOOL_NAMES = [
     "imageread",
 ]
 
-history_tools = registry.get_langchain_tools_by_names(HISTORY_TOOL_NAMES)
-image_tools = registry.get_langchain_tools_by_names(IMAGE_TOOL_NAMES)
+VISION_PROFILE_NAME = "qwen3.6"
 
-history_node_llm = llm.bind_tools(history_tools)
-image_node_llm = llm.bind_tools(image_tools)
 
-history_tool_node = ToolNode(
-        history_tools,
-        messages_key="history_messages",
-    )
-
-image_tool_node = ToolNode(
-        image_tools,
-        messages_key="image_messages",
-    )
-
-def need_history_node(state: ToolAgentState) -> dict:
-
-    raw_messages = [
-        {"role": "system", "content": history_prompt["system"]},
-        *state["messages"],
-        *state["history_messages"],
-    ]
-
-    messages, compressed = message_manage.prepare_messages_for_query(raw_messages)
-
-    save_compress_debug("history", raw_messages, messages, compressed)
-
-    response = history_node_llm.invoke(messages)
-    
-    save_graph_mdv2(
-        event_type="model",
-        node_name="history",
-        response=response,
-        filename="qq_main_graph_steps1.md",
-    )
-
-    return {
-        "history_messages": [response]
-    }
-
-def image_node(state: ToolAgentState) -> dict:
-
-    last_history = state["history_messages"][-1] if state["history_messages"] else None
-    last_history_content = getattr(last_history, "content", "") if last_history else ""
-
-    messages = [
-        {"role": "system", "content": image_prompt["system"]},
-        *state["messages"],
-    ]
-
-    messages.append({
-        "role":"user",
-        "content": f"历史工具检索结果: {last_history_content}",
-    })
-
-    messages.extend(state["image_messages"])
-
-    response = image_node_llm.invoke(messages)
-
-    save_graph_mdv2(
-        event_type="model",
-        node_name="image",
-        response=response,
-        filename="qq_main_graph_steps1.md",
-    )
-
-    return {
-        "image_messages": [response]
-    }
 
 def route_history(state: ToolAgentState) -> Literal["tools", "done"]:
     last_message = state["history_messages"][-1]
@@ -158,70 +80,158 @@ def route_image(state: ToolAgentState) -> Literal["tools", "done"]:
     
     return "done"
 
-def answer_node(state: ToolAgentState) -> dict:
-    last_history = state["history_messages"][-1] if state["history_messages"] else None
-    last_history_content = getattr(last_history, "content", "") if last_history else ""
-
-    last_image = state["image_messages"][-1] if state["image_messages"] else None
-    last_image_content = getattr(last_image, "content", "") if last_image else ""
-
-    messages = [
-        {"role": "system", "content": uuz_prompt["system"]},
-        *state["messages"]
-    ]
-
-    if last_history_content:
-        messages.append({"role": "user", "content": f"历史检索结果:{last_history_content}"})
-
-    if last_image_content:
-        messages.append({"role": "user", "content": f"图片识别结果:{last_image_content}"})
-
-    response = chat_llm.invoke(messages)
-
-    return {
-        "messages": [response]
-    }
 
 
+def build_graph(profile_name: str = "qwen3.6"):
+    allow_image = profile_name == VISION_PROFILE_NAME
+
+    profile = load_profile(profile_name)
+    uuz_prompt = load_prompt("youyouzi")
+    history_prompt = load_prompt("qq_memory_history")
+    
+
+    llm = build_chat_model(profile, temperature=0)
+    chat_llm = build_chat_model(profile, temperature=1.5)
 
 
-def build_graph():
+    history_tools = registry.get_langchain_tools_by_names(HISTORY_TOOL_NAMES)
+    history_node_llm = llm.bind_tools(history_tools)
+    history_tool_node = ToolNode(
+        history_tools,
+        messages_key="history_messages",
+    )
+
+    if allow_image:
+        image_prompt = load_prompt("qq_memory_image")
+        image_tools = registry.get_langchain_tools_by_names(IMAGE_TOOL_NAMES)
+        image_node_llm = llm.bind_tools(image_tools)
+        image_tool_node = ToolNode(
+                image_tools,
+                messages_key="image_messages",
+            )
+    
+    def need_history_node(state: ToolAgentState) -> dict:
+
+        raw_messages = [
+            {"role": "system", "content": history_prompt["system"]},
+            *state["messages"],
+            *state["history_messages"],
+        ]
+
+        messages, compressed = message_manage.prepare_messages_for_query(raw_messages)
+
+        save_compress_debug("history", raw_messages, messages, compressed)
+
+        response = history_node_llm.invoke(messages)
+        
+        save_graph_mdv2(
+            event_type="model",
+            node_name="history",
+            response=response,
+            filename="qq_main_graph_steps1.md",
+        )
+
+        return {
+            "history_messages": [response]
+        }
+
+    def image_node(state: ToolAgentState) -> dict:
+
+        last_history = state["history_messages"][-1] if state["history_messages"] else None
+        last_history_content = getattr(last_history, "content", "") if last_history else ""
+
+        messages = [
+            {"role": "system", "content": image_prompt["system"]},
+            *state["messages"],
+        ]
+
+        messages.append({
+            "role":"user",
+            "content": f"历史工具检索结果: {last_history_content}",
+        })
+
+        messages.extend(state["image_messages"])
+
+        response = image_node_llm.invoke(messages)
+
+        save_graph_mdv2(
+            event_type="model",
+            node_name="image",
+            response=response,
+            filename="qq_main_graph_steps1.md",
+        )
+
+        return {
+            "image_messages": [response]
+        }
+
+    def answer_node(state: ToolAgentState) -> dict:
+        last_history = state["history_messages"][-1] if state["history_messages"] else None
+        last_history_content = getattr(last_history, "content", "") if last_history else ""
+
+        last_image = state["image_messages"][-1] if state["image_messages"] else None
+        last_image_content = getattr(last_image, "content", "") if last_image else ""
+
+        messages = [
+            {"role": "system", "content": uuz_prompt["system"]},
+            *state["messages"]
+        ]
+
+        if last_history_content:
+            messages.append({"role": "user", "content": f"历史检索结果:{last_history_content}"})
+
+        if last_image_content:
+            messages.append({"role": "user", "content": f"图片识别结果:{last_image_content}"})
+
+        response = chat_llm.invoke(messages)
+
+        return {
+            "messages": [response]
+        }
+    
     builder = StateGraph(ToolAgentState)
 
     builder.add_node("history", need_history_node)
     builder.add_node("history_tools", history_tool_node)
-    builder.add_node("image", image_node)
-    builder.add_node("image_tools", image_tool_node)
-    builder.add_node("answer", answer_node)
 
+    if allow_image:
+        builder.add_node("image", image_node)
+        builder.add_node("image_tools", image_tool_node)
+    
+    builder.add_node("answer", answer_node)
     builder.add_edge(START, "history")
     builder.add_conditional_edges(
         "history",
         route_history,
         {
             "tools": "history_tools",
-            "done": "image",  
+            "done": "image" if allow_image else "answer",  
         },
     )
     builder.add_edge("history_tools", "history")
-    builder.add_conditional_edges(
-        "image",
-        route_image,
-        {
-            "tools": "image_tools",
-            "done": "answer",  
-        },
-    )
-    builder.add_edge("image_tools", "image")
+
+    if allow_image:
+        builder.add_conditional_edges(
+            "image",
+            route_image,
+            {
+                "tools": "image_tools",
+                "done": "answer",  
+            },
+        )
+        builder.add_edge("image_tools", "image")
     builder.add_edge("answer", END)
 
     return builder.compile()
 
 
 
-graph = build_graph()
 
-def run_qq_main_agent(group_id: str, question: str, recursion_limit: int = 30) -> str:
+
+def run_qq_main_agent(group_id: str, question: str, profile_name:str = "qwen3.6", recursion_limit: int = 30) -> str:
+    
+    graph = build_graph(profile_name=profile_name)
+
     save_graph_mdv2(
         event_type="run_start",
         node_name="start",
@@ -229,7 +239,7 @@ def run_qq_main_agent(group_id: str, question: str, recursion_limit: int = 30) -
         question=question,
         filename="qq_main_graph_steps1.md",
     )
-
+    
     result = graph.invoke(
         make_initial_state(group_id, question),
         config={"recursion_limit": recursion_limit}

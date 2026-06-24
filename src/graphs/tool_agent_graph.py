@@ -23,46 +23,44 @@ def make_initial_state(question: str) -> ToolAgentState:
 
 AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool"]
 
-profile = load_profile("qwen3.6")
-prompt = load_prompt("tool_agent")
 
-tools = registry.get_langchain_tools_by_names(AGENT_TOOLS)
+def build_graph(profile_name: str = 'qwen3.6'):
+    profile = load_profile(profile_name)
+    prompt = load_prompt("tool_agent")
+    tools = registry.get_langchain_tools_by_names(AGENT_TOOLS)
 
-llm = build_chat_model(profile, temperature=0)
-llm_with_tools = llm.bind_tools(tools)
+    llm = build_chat_model(profile, temperature=0)
+    llm_with_tools = llm.bind_tools(tools)
 
-def assistant_node(state: ToolAgentState) -> dict:
+    def assistant_node(state: ToolAgentState) -> dict:
 
-    messages_for_query, compressed = message_manage.prepare_messages_for_query(
-        state["messages"]
-    )
+        messages_for_query, compressed = message_manage.prepare_messages_for_query(
+            state["messages"]
+        )
 
-    messages = [
-        {"role": "system", "content": prompt["system"]},
-        *messages_for_query,
-    ]
+        messages = [
+            {"role": "system", "content": prompt["system"]},
+            *messages_for_query,
+        ]
 
-    response = llm_with_tools.invoke(messages)
+        response = llm_with_tools.invoke(messages)
 
-    
-
-    save_langchain_message_md(
-        response,
-        question=state["messages"][0].content,
-        messages=messages,
-        tools=tools,
-        request_options={
-            "model": profile["model"],
-            "temperature": 0,
-            "base_url": profile["base_url"],
-        },
-        filename="new_tool_agent_steps.md",
-    )
-    return {
-        "messages": [response]
-    }
-
-def build_graph():
+        save_langchain_message_md(
+            response,
+            question=state["messages"][0].content,
+            messages=messages,
+            tools=tools,
+            request_options={
+                "model": profile["model"],
+                "temperature": 0,
+                "base_url": profile["base_url"],
+            },
+            filename="new_tool_agent_steps.md",
+        )
+        return {
+            "messages": [response]
+        }
+                
     builder = StateGraph(ToolAgentState)
 
     builder.add_node("assistant", assistant_node)
@@ -83,11 +81,13 @@ def build_graph():
 
     return builder.compile()
 
+def run_tool_agent(
+    question: str, 
+    profile_name: str = "qwen3.6",
+    recursion_limit: int = 30
+) -> str:
+    graph = build_graph(profile_name=profile_name)
 
-
-graph = build_graph()
-
-def run_tool_agent(question: str, recursion_limit: int = 10) -> str:
     return graph.invoke(
         make_initial_state(question), 
         config={"recursion_limit": recursion_limit}

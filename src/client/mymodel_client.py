@@ -26,6 +26,10 @@ def load_profile(profile_name: str) -> dict:
         if not base_url:
             raise ValueError(f"Missing environment variable: {base_url_env}")
         profile["base_url"] = base_url
+    api_key_env = profile.pop("api_key_env", None)
+    if api_key_env:
+        api_key = os.getenv(api_key_env)
+        profile["api_key"] = api_key
     return profile
 
 def load_prompt(prompt_name: str) -> dict:
@@ -43,25 +47,26 @@ def load_prompt(prompt_name: str) -> dict:
 
     return prompt
 
-def build_client(profile: dict, timeout: int = 60) -> OpenAI:
+def build_client(profile: dict, timeout: int = 60,) -> OpenAI:
     return OpenAI(
         base_url=profile["base_url"],
-        api_key="EMPTY",
+        api_key=profile["api_key"],
         timeout=timeout,
     )
 
 def build_chat_model(profile: dict, temperature: float = 0):
-    return ChatOpenAI(
-        model=profile["model"],
-        base_url=profile["base_url"],
-        api_key="EMPTY",
-        temperature=temperature,
-        extra_body={
-            "chat_template_kwargs": {
-                "enable_thinking": False
-            }
-        },
-    )
+    kwargs = {
+        "model": profile["model"],
+        "base_url": profile["base_url"],
+        "api_key": profile["api_key"],
+        "temperature": temperature,
+    }
+
+    extra_body = profile.get("extra_body")
+    if extra_body is not None:
+        kwargs["extra_body"] = extra_body
+
+    return ChatOpenAI(**kwargs)
 
 def test_connection(client: OpenAI) -> bool:
     try:
