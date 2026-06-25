@@ -27,7 +27,14 @@ AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool"]
 def build_graph(profile_name: str = 'qwen3.6'):
     profile = load_profile(profile_name)
     prompt = load_prompt("tool_agent")
-    tools = registry.get_langchain_tools_by_names(AGENT_TOOLS)
+    tools = registry.get_langchain_tools_by_names(
+        AGENT_TOOLS,
+        injected_by_tool={
+            "agenttool": {
+                "_profile_name": profile_name,
+            }
+        },
+    )
 
     llm = build_chat_model(profile, temperature=0)
     llm_with_tools = llm.bind_tools(tools)

@@ -10,7 +10,6 @@ TOOL_DIR = Path(__file__).resolve().parent
 
 class InputSchema(BaseModel):
     prompt: str = Field(description="交给子agent独立完成的任务描述")
-    agent_type: str = Field(default="default", description="子agent的类型，例如default 或 youyouzi_subagent，默认为default")
 
 class AgentResult(BaseModel):
     prompt: str = Field(description="主agent交给子agent的原始描述")
@@ -40,12 +39,11 @@ def validate_input(**kwargs) -> tuple[bool, str]:
 
 def call(**kwargs) -> dict:
     try:
+        profile_name = kwargs.pop("_profile_name", "qwen3.6")
         input_data = InputSchema(**kwargs)
 
-        if input_data.agent_type == "youyouzi_subagent":
-            from src.graphs.qq_subagent_graph import graph
-        else:
-            from src.graphs.sub_agent_graph import graph
+        from src.graphs.sub_agent_graph import build_graph
+        graph = build_graph(profile_name=profile_name)
 
         result = graph.invoke(
             {

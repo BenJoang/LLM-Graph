@@ -14,44 +14,44 @@ from src.graphs.context_compression import MessageManage
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
-profile = load_profile("qwen3.6")
-prompt = load_prompt("subagent")
-message_manage = MessageManage()
-tools = registry.get_subagent_langchain_tools()
 
-llm = build_chat_model(profile, temperature=0)
-llm_with_tools = llm.bind_tools(tools)
+def build_graph(profile_name: str = "qwen3.6"):
+    profile = load_profile(profile_name)
+    prompt = load_prompt("subagent")
+    message_manage = MessageManage()
+    tools = registry.get_subagent_langchain_tools()
 
-def assistant_node(state: ToolAgentState) -> dict:
+    llm = build_chat_model(profile, temperature=0)
+    llm_with_tools = llm.bind_tools(tools)
+    def assistant_node(state: ToolAgentState) -> dict:
 
-    messages_for_query, compressed = message_manage.prepare_messages_for_query(
-        state["messages"]
-    )
+        messages_for_query, compressed = message_manage.prepare_messages_for_query(
+            state["messages"]
+        )
 
-    messages = [
-        {"role": "system", "content": prompt["system"]},
-        *messages_for_query,
-    ]
+        messages = [
+            {"role": "system", "content": prompt["system"]},
+            *messages_for_query,
+        ]
 
-    response = llm_with_tools.invoke(messages)
+        response = llm_with_tools.invoke(messages)
 
-    save_langchain_message_md(
-        response,
-        question=state["messages"][0].content,
-        messages=messages,
-        tools=tools,
-        request_options={
-            "model": profile["model"],
-            "temperature": 0,
-            "base_url": profile["base_url"],
-        },
-        filename="subagent_steps.md",
-    )
-    return {
-        "messages": [response]
-    }
+        save_langchain_message_md(
+            response,
+            question=state["messages"][0].content,
+            messages=messages,
+            tools=tools,
+            request_options={
+                "model": profile["model"],
+                "temperature": 0,
+                "base_url": profile["base_url"],
+            },
+            filename="subagent_steps.md",
+        )
+        return {
+            "messages": [response]
+        }
 
-def build_graph():
     builder = StateGraph(ToolAgentState)
 
     builder.add_node("assistant", assistant_node)

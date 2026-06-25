@@ -35,9 +35,11 @@ TOOLS = [
 ]
 
 
-def to_langchain_tool(tool_module):
+def to_langchain_tool(tool_module, injected_kwargs: dict | None = None):
+    injected_kwargs = injected_kwargs or {}
+
     def run_tool(**kwargs):
-        result = tool_module.call(**kwargs)
+        result = tool_module.call(**kwargs, **injected_kwargs)
         return tool_module.render_result_for_llm(result)
 
     return StructuredTool.from_function(
@@ -93,8 +95,16 @@ def get_tool_modules_by_names(tool_names: list[str]) -> list:
 
     return modules
 
-def get_langchain_tools_by_names(tool_names: list[str]) -> list:
+def get_langchain_tools_by_names(
+        tool_names: list[str],
+        injected_by_tool: dict[str, dict] | None = None,
+        ) -> list:
+    injected_by_tool = injected_by_tool or {}
+
     return [
-        to_langchain_tool(tool_module)
+        to_langchain_tool(
+            tool_module,
+            injected_kwargs=injected_by_tool.get(tool_module.TOOL_NAME),
+            )
         for tool_module in get_tool_modules_by_names(tool_names)
     ]
