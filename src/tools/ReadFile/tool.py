@@ -18,9 +18,9 @@ ALLOWED_SUFFIXES = TEXT_SUFFIXES | DOCX_SUFFIXES
 
 
 class InputSchema(BaseModel):
-    file_path: str = Field(description="要读取的文件的绝对路径，支持.docx和.py。")
+    file_path: str = Field(description="要读取的文件的绝对路径，支持 .docx、.py、.ts、.tsx、.js、.jsx、.json、.md、.txt。")
     offset: int = Field(default=1, description="从第几行开始读取，默认从1开始")
-    limit: int | None = Field(default=None, description="最多读取多少行，文件较长时使用，默认为None")
+    limit: int | None = Field(default=None, description="最多读取多少行，文件较长时使用，默认为None，上限为200")
 
 class OutputSchema(BaseModel):
     ok: bool = Field(description="工具是否执行成功")
@@ -39,10 +39,10 @@ def get_input_schema() -> dict:
 def get_output_schema() -> dict:
     return OutputSchema.model_json_schema()
 
-def validate_input(file_path: str) -> tuple[bool, str]:
+def validate_input(**kwargs) -> tuple[bool, str]:
 
     try:
-        input_data = InputSchema(file_path=file_path)
+        input_data = InputSchema(**kwargs)
     except Exception as e:
         return False, str(e)
     
@@ -54,15 +54,17 @@ def validate_input(file_path: str) -> tuple[bool, str]:
     if not path.is_file():
         return False, f"路径 '{input_data.file_path}' 不是一个文件。"
     
-    allowed_suffixes = {".docx", ".py", ".ts", ".tsx"}
-    
-    if path.suffix.lower() not in allowed_suffixes:
-        return False, f"仅支持 {', '.join(allowed_suffixes)} 格式的文件。"
+    if path.suffix.lower() not in ALLOWED_SUFFIXES:
+        return False, f"仅支持 {', '.join(ALLOWED_SUFFIXES)} 格式的文件。"
     
     return True, ""
 
 def call(file_path: str, offset: int = 1, limit: int | None = None) -> dict:
-    ok, error_message = validate_input(file_path)
+    ok, error_message = validate_input(
+        file_path=file_path,
+        offset=offset,
+        limit=limit,
+        )
     if not ok:
         return OutputSchema(
             ok=False,
@@ -77,18 +79,25 @@ def call(file_path: str, offset: int = 1, limit: int | None = None) -> dict:
     )
 
     path = Path(input_data.file_path)
-
     suffix = path.suffix.lower()
-
-    if suffix in TEXT_SUFFIXES:
-        return read_text_file(path, input_data.offset, input_data.limit)
-    elif suffix in DOCX_SUFFIXES:
-        return read_docx_file(path, input_data.offset, input_data.limit)
-    
-    return OutputSchema(
-        ok=False,
-        error=f"不支持的文件类型：{suffix}",
-    ).model_dump()
+    try:
+        if suffix in TEXT_SUFFIXES:
+            return read_text_file(path, input_data.offset, input_data.limit)
+        elif suffix in DOCX_SUFFIXES:
+            return read_docx_file(path, input_data.offset, input_data.limit)
+        
+        return OutputSchema(
+            ok=False,
+            error=f"不支持的文件类型：{suffix}",
+        ).model_dump()
+    except Exception as e:
+        return OutputSchema(
+            ok=False,
+            error=f"读取文件失败：{e}",
+            file_path=str(path),
+            file_type=suffix,
+            content="",
+        ).model_dump()
 
 def read_docx_file(path: Path, offset: int, limit: int | None) -> dict:
     doc = Document(path)
