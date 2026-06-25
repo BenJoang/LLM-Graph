@@ -17,6 +17,29 @@
 
 一般的功能都用tool_agent_graph，他有子agent拉起功能，能够完成一些比较一般的任务。
 
+### 怎么使用tool_agent_graph
+
+`tool_agent_graph` 是带工具调用能力的 agent graph，可以通过 `run_tool_agent()` 传入问题，让模型自动选择工具并返回结果。
+
+示例用法：主目录创建一个test脚本
+```python
+import json
+import logging
+from pathlib import Path
+from src.graphs.tool_agent_graph import run_tool_agent 
+
+logging.basicConfig(level=logging.INFO)
+question = f"你好，介绍一下自己，你有什么能力"
+
+result = run_tool_agent(question, recursion_limit = 50, profile_name="deepseekv4-flash")
+messages = result["messages"]
+
+output_path = Path(__file__).resolve().parent / "tool_agent_result.json"
+
+with output_path.open("w", encoding="utf-8") as f:
+    json.dump(messages, f, ensure_ascii=False, indent=2, default=str)
+```
+
 ## 开发计划
 
 - [x] 子Agent编写和正常拉起
