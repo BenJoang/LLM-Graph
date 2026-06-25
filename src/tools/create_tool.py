@@ -51,7 +51,7 @@ def create_tool_py(tool_name: str, destructive: bool = False) -> str:
 
     return f'''from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 TOOL_NAME = "{tool_name}"
 TOOL_DIR = Path(__file__).resolve().parent
@@ -78,7 +78,7 @@ def get_output_schema() -> dict:
 def validate_input(**kwargs) -> tuple[bool, str]:
 
     try:
-        InputSchema(**kwargs)
+        input_data = InputSchema(**kwargs)
     except Exception as e:
         return False, str(e)
 
@@ -144,7 +144,7 @@ def call(**kwargs) -> dict:
             error="",
             data=result_data,
         ).model_dump()
-        
+
     except Exception as e:
         return OutputSchema(
             ok=False,

@@ -21,7 +21,7 @@ class ToolAgentState(TypedDict):
 def make_initial_state(question: str) -> ToolAgentState:
     return {"messages": [{"role": "user", "content": question}]}
 
-AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool"]
+AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool"]
 
 
 def build_graph(profile_name: str = 'qwen3.6'):

@@ -8,6 +8,7 @@ from src.tools.Imageread import tool as imageread
 from src.tools.QqMemorySearch import tool as qq_memory_search
 from src.tools.MemorySearch import tool as memory_search
 from src.tools.MemoryWrite import tool as memory_write
+from src.tools.PythonTool import tool as python_tool
 
 from langchain_core.tools import StructuredTool
 
@@ -20,6 +21,7 @@ TOOL_ENTRIES = {
     qq_memory_search.TOOL_NAME: qq_memory_search,
     memory_search.TOOL_NAME: memory_search,
     memory_write.TOOL_NAME: memory_write,
+    python_tool.TOOL_NAME: python_tool,
 }
 
 TOOLS = [
@@ -29,6 +31,7 @@ TOOLS = [
     agenttool,
     memory_search,
     memory_write,
+    python_tool
 ]
 
 
