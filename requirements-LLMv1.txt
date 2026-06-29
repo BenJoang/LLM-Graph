@@ -37,11 +37,13 @@ openai==2.37.0
 orjson==3.11.9
 ormsgpack==1.12.2
 packaging==26.0
+Pillow==11.3.0
 pydantic==2.13.4
 pydantic-extra-types==2.11.1
 pydantic-settings==2.14.1
 pydantic_core==2.46.4
 Pygments==2.20.0
+python-docx==1.2.0
 python-dotenv==1.2.2
 python-multipart==0.0.29
 PyYAML==6.0.3
@@ -70,3 +72,4 @@ websockets==16.0
 wheel==0.46.3
 xxhash==3.7.0
 zstandard==0.25.0
+
