@@ -10,7 +10,8 @@ from src.client.mymodel_client import build_chat_model, load_profile, load_promp
 from src.client.mymodel_client import save_agent_trace_md
 from src.tools import registry
 
-from src.graphs.context_compression import MessageManage
+from src.context.context_compression import MessageManage
+from src.context.skills_loader import build_skill_system_message
 
 logging.basicConfig(level=logging.INFO)
 message_manage = MessageManage()
@@ -47,6 +48,7 @@ def build_graph(profile_name: str = 'qwen3.6'):
 
         messages = [
             {"role": "system", "content": prompt["system"]},
+            {"role": "system", "content": build_skill_system_message()},
             *messages_for_query,
         ]
 

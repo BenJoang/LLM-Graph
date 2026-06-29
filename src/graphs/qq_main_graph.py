@@ -15,7 +15,7 @@ import json
 import logging
 from pathlib import Path
 
-from src.graphs.context_compression import MessageManage
+from src.context.context_compression import MessageManage
 from src.client.mymodel_client import serialize_message
 
 message_manage = MessageManage()
