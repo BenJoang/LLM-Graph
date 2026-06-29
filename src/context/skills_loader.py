@@ -75,7 +75,7 @@ def format_available_skills(skills_dir: Path = SKILLS_DIR) -> str:
         return "当前没有可用 skills。"
 
     lines = [
-        "-- 当前可以使用的skills --",
+        "<当前可以使用的skills>",
     ]
 
     for skill in skills:
@@ -85,7 +85,7 @@ def format_available_skills(skills_dir: Path = SKILLS_DIR) -> str:
             ]
         )
 
-    lines.append("-- skills end --")
+    lines.append("<skills end>")
     return "\n".join(lines)
 
 

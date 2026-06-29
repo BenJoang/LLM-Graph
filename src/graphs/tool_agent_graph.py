@@ -1,6 +1,7 @@
 from typing import Annotated
 from typing_extensions import TypedDict
 import logging
+from pathlib import Path
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -11,7 +12,7 @@ from src.client.mymodel_client import save_agent_trace_md
 from src.tools import registry
 
 from src.context.context_compression import MessageManage
-from src.context.skills_loader import build_skill_system_message
+from src.context.context_builder import build_system_context
 
 logging.basicConfig(level=logging.INFO)
 message_manage = MessageManage()
@@ -25,7 +26,7 @@ def make_initial_state(question: str) -> ToolAgentState:
 AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool"]
 
 
-def build_graph(profile_name: str = 'qwen3.6'):
+def build_graph(profile_name: str = 'qwen3.6', working_dir: str | None = None):
     profile = load_profile(profile_name)
     prompt = load_prompt("tool_agent")
     tools = registry.get_langchain_tools_by_names(
@@ -41,14 +42,25 @@ def build_graph(profile_name: str = 'qwen3.6'):
     llm_with_tools = llm.bind_tools(tools)
 
     def assistant_node(state: ToolAgentState) -> dict:
-
         messages_for_query, compressed = message_manage.prepare_messages_for_query(
             state["messages"]
         )
+        
+        context_system = build_system_context(
+            working_dir=working_dir,
+        )
+
+        system_content = "\n\n".join(
+            part for part in [
+                prompt["system"],
+                context_system,
+            ]
+            if part
+        )
+        
 
         messages = [
-            {"role": "system", "content": prompt["system"]},
-            {"role": "system", "content": build_skill_system_message()},
+            {"role": "system", "content": system_content},
             *messages_for_query,
         ]
 
@@ -93,7 +105,8 @@ def build_graph(profile_name: str = 'qwen3.6'):
 def run_tool_agent(
     question: str, 
     profile_name: str = "qwen3.6",
-    recursion_limit: int = 30
+    recursion_limit: int = 30,
+    working_dir: str | None = None,
 ) -> str:
     graph = build_graph(profile_name=profile_name)
 

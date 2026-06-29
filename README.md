@@ -49,9 +49,9 @@ with output_path.open("w", encoding="utf-8") as f:
 - [x] QQ用的graph能够自动搜索历史记录并按意愿调用图像理解功能
 - [x] 支持deepseek版本的接入，QQ用的版本也支持了
 - [ ] 两层上下文机制触发仍超限时，构建三次重试，每次使用更强硬的自动压缩方法
-- [ ] ~~用subprocess写python脚本执行功能~~，增加OCR功能，RAG改成用skill读取内容并转md，对接某个正在使用的平台，然后看看能不能用3.5的小模型正常完成功能
-- [ ] tool_agent_graph需要可以指定路径，然后能够自动拼接某.md文件到系统提示词中
-- [ ] 支持skill载入和网上skill的使用
+- [ ] ~~用subprocess写python脚本执行功能~~，增加OCR功能，~~RAG改成用skill读取内容~~并转md，对接某个正在使用的平台，然后看看能不能用3.5的小模型正常完成功能
+- [x] tool_agent_graph需要可以指定路径，然后能够自动拼接某.md文件到系统提示词中
+- [ ] ~~支持skill载入~~和网上skill的使用
 - [ ] 支持把记忆写成md格式
 - [ ] 接入某个奇怪的TTS，实现日常娱乐小工具和任务安排等简单功能
 - [ ] 把项目放到docker上（？）
