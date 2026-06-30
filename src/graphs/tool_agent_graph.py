@@ -108,7 +108,10 @@ def run_tool_agent(
     recursion_limit: int = 30,
     working_dir: str | None = None,
 ) -> str:
-    graph = build_graph(profile_name=profile_name)
+    graph = build_graph(
+        profile_name=profile_name,
+        working_dir=working_dir,
+        )
 
     return graph.invoke(
         make_initial_state(question), 

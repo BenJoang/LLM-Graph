@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from src.api.routes.chat import router as chat_router
 from src.api.routes.health import router as health_router
+from src.api.routes.tool_agent import router as tool_agent_router
 
 
 
@@ -9,3 +10,4 @@ app = FastAPI(title="Local LLM API")
 
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(tool_agent_router)
