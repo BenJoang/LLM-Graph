@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
-TOOL_NAME = "Skill_tool"
+TOOL_NAME = "skill_tool"
 TOOL_DIR = Path(__file__).resolve().parent
 
 SKILLS_DIR = Path(__file__).resolve().parents[3] / "skills"

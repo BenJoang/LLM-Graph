@@ -9,6 +9,8 @@ from src.context.working_dir_loader import build_working_dir_system_message
 
 def build_system_context(
     working_dir: str | Path | None = None,
+    skill_names: list[str] | None = None,
+    include_all_skills: bool = False,
 ) -> str:
     parts = [
         build_working_dir_system_message(working_dir),
@@ -16,7 +18,10 @@ def build_system_context(
             working_dir=working_dir,
             mode="nearest",
         ),
-        build_skill_system_message(),
+        build_skill_system_message(
+            skill_names=skill_names,
+            include_all_skills=include_all_skills
+        ),
     ]
 
     return "\n\n".join(part for part in parts if part)

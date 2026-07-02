@@ -23,7 +23,8 @@ class ToolAgentState(TypedDict):
 def make_initial_state(question: str) -> ToolAgentState:
     return {"messages": [{"role": "user", "content": question}]}
 
-AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool"]
+AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool", "skill_tool"]
+SKILLS = ["wuxiwaterskill"]
 
 
 def build_graph(profile_name: str = 'qwen3.6', working_dir: str | None = None):
@@ -48,6 +49,7 @@ def build_graph(profile_name: str = 'qwen3.6', working_dir: str | None = None):
         
         context_system = build_system_context(
             working_dir=working_dir,
+            skill_names=SKILLS
         )
 
         system_content = "\n\n".join(

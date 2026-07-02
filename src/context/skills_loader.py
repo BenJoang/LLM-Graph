@@ -68,17 +68,32 @@ def read_skill(skill_name: str, skills_dir: Path = SKILLS_DIR) -> SkillInfo:
     raise FileNotFoundError(f"Skill '{skill_name}' not found. Available: {available}")
 
 
-def format_available_skills(skills_dir: Path = SKILLS_DIR) -> str:
+def format_available_skills(
+        skills_dir: Path = SKILLS_DIR, 
+        skill_names: list[str] | None = None,
+        include_all_skills: bool = False,
+    ) -> str:
     skills = list_skills(skills_dir)
 
     if not skills:
         return "当前没有可用 skills。"
+    
+    if include_all_skills:
+        selected_skills = skills
+    elif skill_names:
+        skill_name_set = set(skill_names)
+        selected_skills = [
+            skill for skill in skills
+            if skill.name in skill_name_set
+        ]
+    else:
+        selected_skills = skills
 
     lines = [
         "<当前可以使用的skills>",
     ]
 
-    for skill in skills:
+    for skill in selected_skills:
         lines.extend(
             [
                 f"- {skill.name} :{skill.description}",
@@ -89,8 +104,12 @@ def format_available_skills(skills_dir: Path = SKILLS_DIR) -> str:
     return "\n".join(lines)
 
 
-def build_skill_system_message(skills_dir: Path = SKILLS_DIR) -> str:
+def build_skill_system_message(
+        skills_dir: Path = SKILLS_DIR,
+        skill_names: list[str] | None = None,
+        include_all_skills: bool = False,
+    ) -> str:
     return f"""当任务匹配某个 Skill 描述时，先调用 skill 工具加载该 Skill 的完整说明。skill完整说明都是文件夹里面的skill.md。
-不要猜测 Skill 内容。
-{format_available_skills(skills_dir)}
+不要猜测 Skill 内容。没有在下面列出来的skill都是不能使用的skill, 只能使用下面列出来的skill。
+{format_available_skills(skills_dir, skill_names=skill_names, include_all_skills=include_all_skills)}
 """
