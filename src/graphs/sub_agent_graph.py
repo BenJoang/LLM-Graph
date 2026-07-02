@@ -8,7 +8,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
 from src.client.mymodel_client import save_agent_trace_md
 from src.tools import registry
-from src.graphs.context_compression import MessageManage
+from src.context.context_compression import MessageManage
 
 
 class ToolAgentState(TypedDict):

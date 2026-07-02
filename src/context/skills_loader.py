@@ -90,7 +90,7 @@ def format_available_skills(skills_dir: Path = SKILLS_DIR) -> str:
 
 
 def build_skill_system_message(skills_dir: Path = SKILLS_DIR) -> str:
-    return f"""当任务匹配某个 Skill 描述时，先调用 skill 工具加载该 Skill 的完整说明。
+    return f"""当任务匹配某个 Skill 描述时，先调用 skill 工具加载该 Skill 的完整说明。skill完整说明都是文件夹里面的skill.md。
 不要猜测 Skill 内容。
 {format_available_skills(skills_dir)}
 """

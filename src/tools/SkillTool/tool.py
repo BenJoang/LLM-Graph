@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, ValidationError
 TOOL_NAME = "Skill_tool"
 TOOL_DIR = Path(__file__).resolve().parent
 
+SKILLS_DIR = Path(__file__).resolve().parents[3] / "skills"
+
 IS_READ_ONLY = True
 IS_DESTRUCTIVE = False
 MAX_RESULT_CHARS = 10000
@@ -59,6 +61,34 @@ def truncate_text(text: str, max_chars: int = MAX_RESULT_CHARS) -> tuple[str, bo
 
     return text[:max_chars], True
 
+def resolve_skill_md(skill_name: str) -> Path:
+    name = skill_name.strip()
+
+    if not name:
+        raise ValueError("skill_name 不能为空")
+
+    if "\\" in name or "/" in name:
+        raise ValueError("skill_name 只能是技能目录名，不能包含路径分隔符")
+
+    if name in {".", ".."}:
+        raise ValueError("skill_name 不合法")
+
+    skill_dir = (SKILLS_DIR / name).resolve()
+    skills_root = SKILLS_DIR.resolve()
+
+    if not skill_dir.is_relative_to(skills_root):
+        raise ValueError("skill_name 不允许跳出 skills 目录")
+
+    skill_md = skill_dir / "skill.md"
+
+    if not skill_dir.is_dir():
+        raise ValueError(f"skill 目录不存在：{skill_dir}")
+
+    if not skill_md.is_file():
+        raise ValueError(f"skill.md 不存在：{skill_md}")
+
+    return skill_md
+
 
 def call(**kwargs) -> dict:
     ok, error_message = validate_input(**kwargs)
@@ -81,11 +111,17 @@ def call(**kwargs) -> dict:
     try:
         input_data = InputSchema(**kwargs)
 
-        # TODO: 在这里实现工具逻辑。
-        
+        skill_md = resolve_skill_md(input_data.skill_name)
+        content = skill_md.read_text(encoding="utf-8")
+
+        truncated_content, truncated = truncate_text(content)
+
         result_data = {
-            "input": input_data.model_dump(),
-            "message": "TODO: implement tool logic",
+            "skill_name": input_data.skill_name,
+            "skill_dir": str(skill_md.parent),
+            "skill_md": str(skill_md),
+            "content": truncated_content,
+            "truncated": truncated,
         }
 
         return OutputSchema(
@@ -107,7 +143,26 @@ def render_result_for_llm(result: dict) -> str:
     """
     output = OutputSchema(**result)
 
+
+
     if not output.ok:
         return f"{TOOL_NAME}工具执行失败：{output.error}"
 
-    return f"{TOOL_NAME}工具执行成功：{output.data}"
+    data = output.data if isinstance(output.data, dict) else {}
+    skill_name = data.get("skill_name", "")
+    skill_md = data.get("skill_md", "")
+    content = data.get("content", "")
+    truncated = data.get("truncated", False)
+
+    lines = [
+        f"已读取 skill：{skill_name}",
+        f"路径：{skill_md}",
+        "",
+        content,
+    ]
+
+    if truncated:
+        lines.append("")
+        lines.append("注意：内容过长，已截断。")
+
+    return "\n".join(lines)
