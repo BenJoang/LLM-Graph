@@ -54,7 +54,7 @@ def call(**kwargs) -> dict:
                     }
                 ]
             },
-            config={"recursion_limit":60}
+            config={"recursion_limit":100}
         )
 
         answer = result["messages"][-1].content

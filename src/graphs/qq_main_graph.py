@@ -228,7 +228,7 @@ def build_graph(profile_name: str = "qwen3.6"):
 
 
 
-def run_qq_main_agent(group_id: str, question: str, profile_name:str = "qwen3.6", recursion_limit: int = 30) -> str:
+def run_qq_main_agent(group_id: str, question: str, profile_name:str = "qwen3.6", recursion_limit: int = 200) -> str:
     
     graph = build_graph(profile_name=profile_name)
 

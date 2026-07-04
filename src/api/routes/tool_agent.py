@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from src.graphs.tool_agent_graph import run_tool_agent
+from src.graphs.wuxiagent import run_tool_agent as wuxi_agent
 from skills.wuxiwaterskill.src.server.check_latest_discharge_warning import (
     check_latest_discharge_warning,
 )
@@ -40,6 +41,21 @@ def extract_answer(result: Any) -> str:
 async def tool_agent(request: ToolAgentRequest) -> dict:
     result = await asyncio.to_thread(
         run_tool_agent,
+        question=request.question,
+        profile_name=request.profile_name,
+        recursion_limit=request.recursion_limit,
+        working_dir=request.working_dir,
+    )
+
+    return {
+        "ok": True,
+        "answer": extract_answer(result),
+    }
+
+@router.post("/wuxi-agent")
+async def wuxi_agent_route(request: ToolAgentRequest) -> dict:
+    result = await asyncio.to_thread(
+        wuxi_agent,
         question=request.question,
         profile_name=request.profile_name,
         recursion_limit=request.recursion_limit,

@@ -44,6 +44,11 @@
             "name":"历史上下文总结用",
             "description":"上下文第二层压缩时使用",
             "system_file":"prompts/collapse_compact.md"
+        },
+        "wuxi_agent":{
+            "name": "wuxi用agent",
+            "description":"suibian",
+            "system_file": "prompts/wuxi_agent.md"
         }
     }
 }

@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import sys
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -15,9 +16,13 @@ DEFAULT_TIME_OUT = 30
 MAX_TIMEOUT = 120
 
 class InputSchema(BaseModel):
-    script_path: str = Field(description="要执行的 Python 脚本绝对路径，必须是 .py文件")
+    mode: Literal["script", "inline"] = "script"
+
+    script_path: str | None = Field(default=None, description="mode=script 时要执行的 .py 脚本文件绝对路径")
+    code: str | None = Field(default=None, description="mode=inline 时通过 python -c 执行的代码")
+
     cwd: str | None = Field(default=None, description="执行脚本时的工作目录，默认脚本所在目录")
-    args: list[str] = Field(default_factory=list,description="run_script 时传给脚本的参数",)
+    args: list[str] = Field(default_factory=list,description="传给脚本或 -c 代码的 argv 参数",)
 
     python_path: str | None = Field(
         default=None,
@@ -40,16 +45,31 @@ def get_output_schema() -> dict:
 def validate_input(**kwargs) -> tuple[bool, str]:
     try:
         input_data = InputSchema(**kwargs)
-
-        script_path = resolve_script_path(input_data.script_path)
-        resolve_cwd(input_data.cwd, script_path)
         resolve_python_path(input_data.python_path)
+
+        if input_data.mode == "script":
+            if not input_data.script_path:
+                return False, "mode=script 时必须提供 script_path"
+            if input_data.code:
+                return False, "mode=script 时不能提供 code"
+            script_path = resolve_script_path(input_data.script_path)
+            resolve_cwd(input_data.cwd, script_path)
+            
+        if input_data.mode == "inline":
+            if not input_data.code:
+                return False, "mode=inline 时必须提供 code"
+            if input_data.script_path:
+                return False, "mode=inline 时不能提供 script_path"
+            resolve_inline_cwd(input_data.cwd)
+        
+        
 
     except ValidationError as e:
         return False, str(e)
     
     except Exception as e:
         return False, str(e)
+    
     
     
     
@@ -112,6 +132,11 @@ def resolve_cwd(cwd: str | None, script_path: Path) -> Path:
 
     return resolve_existing_path(cwd, must_be_file=False)
 
+def resolve_inline_cwd(cwd: str | None) -> Path:
+    if cwd is None:
+        return Path.cwd().resolve()
+    return resolve_existing_path(cwd, must_be_file=False)
+
 def resolve_existing_path(path_text: str, *, must_be_file: bool | None = None) -> Path:
     path = Path(path_text).expanduser().resolve()
 
@@ -157,15 +182,26 @@ def call(**kwargs) -> dict:
 
     try:
         input_data = InputSchema(**kwargs)
-        script_path = resolve_script_path(input_data.script_path)
-        cwd = resolve_cwd(input_data.cwd, script_path)
         python_path = resolve_python_path(input_data.python_path)
 
-        command = [
-            str(python_path),
-            str(script_path),
-            *input_data.args,
-        ]
+        if input_data.mode == "script":
+            script_path = resolve_script_path(input_data.script_path)
+            cwd = resolve_cwd(input_data.cwd, script_path)
+
+            command = [
+                str(python_path),
+                str(script_path),
+                *input_data.args,
+            ]
+        if input_data.mode == "inline":
+            cwd = resolve_inline_cwd(input_data.cwd)
+            
+            command = [
+                str(python_path),
+                "-c",
+                input_data.code,
+                *input_data.args,
+            ]
 
         try:
             completed = subprocess.run(

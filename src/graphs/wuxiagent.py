@@ -28,7 +28,7 @@ SKILLS = ["wuxiwaterskill"]
 
 def build_graph(profile_name: str = 'qwen3.6', working_dir: str | None = None):
     profile = load_profile(profile_name)
-    prompt = load_prompt("tool_agent")
+    prompt = load_prompt("wuxi_agent")
     tools = registry.get_langchain_tools_by_names(
         AGENT_TOOLS,
         injected_by_tool={
@@ -48,9 +48,7 @@ def build_graph(profile_name: str = 'qwen3.6', working_dir: str | None = None):
         
         context_system = build_system_context(
             working_dir=working_dir,
-            skill_names=SKILLS,
-            working_dir_need=True,
-            instruction_need=True
+            skill_names=SKILLS
         )
 
         system_content = "\n\n".join(

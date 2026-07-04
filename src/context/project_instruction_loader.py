@@ -152,12 +152,16 @@ def build_project_instruction_system_message(
     names: Sequence[str] = DEFAULT_INSTRUCTION_NAMES,
     mode: LoadMode = "nearest",
     stop_dir: str | Path | None = None,
+    instruction_need: bool = False
 ) -> str:
-    instructions = load_project_instructions(
-        working_dir=working_dir,
-        names=names,
-        mode=mode,
-        stop_dir=stop_dir,
-    )
+    if instruction_need:
+        instructions = load_project_instructions(
+            working_dir=working_dir,
+            names=names,
+            mode=mode,
+            stop_dir=stop_dir,
+        )
 
-    return format_project_instructions(instructions)
+        return format_project_instructions(instructions)
+    else:
+        return 
