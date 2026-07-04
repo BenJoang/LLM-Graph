@@ -211,6 +211,61 @@ def _get_level_name(
 
     return result.get("level_name") or "正常"
 
+def has_latest_discharge_level_at_least(
+    sites_data: list[dict],
+    min_level: int = 3,
+) -> dict:
+    matched_sites = []
+
+    for site_data in sites_data:
+        if not isinstance(site_data, dict):
+            continue
+
+        site_id = site_data.get("site_id", "未知站点")
+        rain_rows = site_data.get("rain_rows") or []
+        radar_rows = site_data.get("radar_rows") or []
+        discharge_rows = site_data.get("discharge_rows") or site_data.get("discharge") or []
+
+        latest = _latest_valid_discharge_row(discharge_rows)
+        if not latest:
+            continue
+
+        latest_radar = _nearest_row_by_time(radar_rows, latest)
+        rain_12h_mm = _sum_rain_inst_12h_before_max_cum(rain_rows)
+
+        water_level = _to_float(latest.get("water_level_m"))
+        average_speed = _to_float(latest.get("average_speed_mps"))
+        radar_water_level = _to_float((latest_radar or {}).get("water_depth_m"))
+        radar_flow_speed = _to_float((latest_radar or {}).get("surface_velocity_mps"))
+
+        try:
+            level_result = match_level_strategy(
+                site_id=site_id,
+                rain_12h_mm=rain_12h_mm,
+                radar_water_level_m=radar_water_level,
+                algorithm_water_level_m=water_level,
+                radar_flow_speed_mps=radar_flow_speed,
+                algorithm_flow_speed_mps=average_speed,
+            )
+        except Exception:
+            continue
+
+        level_index = int(level_result.get("level_index") or 0)
+
+        if level_index >= min_level:
+            matched_sites.append({
+                "site_id": site_id,
+                "level_index": level_index,
+                "level_name": level_result.get("level_name") or "未知",
+                "time": latest.get("time_str") or latest.get("video_start_time"),
+            })
+
+    return {
+        "matched": bool(matched_sites),
+        "min_level": min_level,
+        "matched_sites": matched_sites,
+    }
+
 
 def build_llm_summary(site_summaries: list[dict], hours: int) -> str:
     lines = []
@@ -361,4 +416,6 @@ def process_latest_discharge_for_llm(sites_data: list[dict]) -> str:
         return "各站点最近一次测流数据：没有获取到有效测流数据。"
 
     return "\n".join(lines)
+
+
 

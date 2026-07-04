@@ -5,6 +5,9 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from src.graphs.tool_agent_graph import run_tool_agent
+from skills.wuxiwaterskill.src.server.check_latest_discharge_warning import (
+    check_latest_discharge_warning,
+)
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -13,6 +16,11 @@ class ToolAgentRequest(BaseModel):
     profile_name: str = "qwen3.6"
     recursion_limit: int = 70
     working_dir: str | None = None
+
+class LatestDischargeWarningRequest(BaseModel):
+    hours: int = Field(default=2, ge=1, le=72)
+    limit: int = Field(default=2000, ge=1, le=20000)
+    min_level: int = Field(default=3, ge=1, le=5)
 
 def extract_answer(result: Any) -> str:
     if isinstance(result, str):
@@ -41,4 +49,18 @@ async def tool_agent(request: ToolAgentRequest) -> dict:
     return {
         "ok": True,
         "answer": extract_answer(result),
+    }
+
+@router.post("/latest-discharge-warning")
+async def latest_discharge_warning(request: LatestDischargeWarningRequest) -> dict:
+    result = await asyncio.to_thread(
+        check_latest_discharge_warning,
+        hours=request.hours,
+        limit=request.limit,
+        min_level=request.min_level,
+    )
+
+    return {
+        "ok": True,
+        **result,
     }
