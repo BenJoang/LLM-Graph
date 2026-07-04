@@ -9,8 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_INSTRUCTION_NAMES = (
     "AGENTS.md",
-    "CLAUDE.md",
     "PROJECT.md",
+    "CLAUDE.md",
 )
 
 MAX_INSTRUCTION_CHARS = 40000
