@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import asyncio
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -18,7 +19,7 @@ from src.context.context_builder import build_system_context
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DB = PROJECT_ROOT / "outputs" / "checkpoints" / "tool_agent.sqlite"
 
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 message_manage = MessageManage()
 
 class ToolAgentState(TypedDict):
@@ -77,6 +78,8 @@ def build_graph(
         ]
 
         response = llm_with_tools.invoke(messages)
+        #logging.info(response.content)
+        print(response.content)
 
         save_langchain_message_md(
             response,
@@ -121,21 +124,24 @@ def run_tool_agent(
     recursion_limit: int = 200,
     working_dir: str | None = None,
 ) -> str:
-    graph = build_graph(
-        profile_name=profile_name,
-        working_dir=working_dir,
-        )
-    config = {
-            "configurable": {
-                "thread_id": thread_id,
-            },
-            "recursion_limit": recursion_limit,
-        }
+    CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
+        graph = build_graph(
+            profile_name=profile_name,
+            working_dir=working_dir,
+            checkpointer=checkpointer
+            )
+        config = {
+                "configurable": {
+                    "thread_id": thread_id,
+                },
+                "recursion_limit": recursion_limit,
+            }
 
-    return graph.invoke(
-        make_initial_state(question), 
-        config=config
-    )
+        return graph.invoke(
+            make_initial_state(question), 
+            config=config
+        )
 
 async def arun_tool_agent(
     question: str,
