@@ -1,7 +1,7 @@
 # Skill_tool
 
 ## DESCRIPTION
-按 skill 名称读取项目 skills 目录下对应技能的 skill.md 内容。
+按 skill 名称读取项目 skills 目录下对应技能的 skill.md 或 SKILL.md 内容。
 ## PROMPT
 
 ### WHEN_TO_USE

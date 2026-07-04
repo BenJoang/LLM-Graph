@@ -79,15 +79,19 @@ def resolve_skill_md(skill_name: str) -> Path:
     if not skill_dir.is_relative_to(skills_root):
         raise ValueError("skill_name 不允许跳出 skills 目录")
 
-    skill_md = skill_dir / "skill.md"
-
     if not skill_dir.is_dir():
         raise ValueError(f"skill 目录不存在：{skill_dir}")
+    
+    for filename in ("skill.md", "SKILL.md"):
+        skill_md = skill_dir / filename
+        if skill_md.is_file():
+            return skill_md
 
     if not skill_md.is_file():
         raise ValueError(f"skill.md 不存在：{skill_md}")
+    
+    raise ValueError(f"skill.md 或 SKILL.md 不存在：{skill_dir}")
 
-    return skill_md
 
 
 def call(**kwargs) -> dict:
