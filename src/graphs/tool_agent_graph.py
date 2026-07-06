@@ -13,8 +13,13 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
 from src.tools import registry
 
+from src.context.message_context import(
+    get_next_turn_id,
+    make_initial_state,
+)
 from src.context.context_compression import MessageManage
 from src.context.context_builder import build_system_context
+from src.context.invoke_retry import invoke_with_retry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DB = PROJECT_ROOT / "outputs" / "checkpoints" / "tool_agent.sqlite"
@@ -24,9 +29,7 @@ message_manage = MessageManage()
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
-
-def make_initial_state(question: str) -> ToolAgentState:
-    return {"messages": [{"role": "user", "content": question}]}
+    turn_id: int
 
 AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool", "skill_tool"]
 SKILLS = ["wuxiwaterskill"]
@@ -77,9 +80,10 @@ def build_graph(
             *messages_for_query,
         ]
 
-        response = llm_with_tools.invoke(messages)
-        #logging.info(response.content)
-        print(response.content)
+        #response = llm_with_tools.invoke(messages)
+        response = 
+        logging.info(response)
+        #print(response.content)
 
         save_langchain_message_md(
             response,
@@ -126,6 +130,7 @@ def run_tool_agent(
 ) -> str:
     CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
     with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
+
         graph = build_graph(
             profile_name=profile_name,
             working_dir=working_dir,
@@ -137,9 +142,14 @@ def run_tool_agent(
                 },
                 "recursion_limit": recursion_limit,
             }
+        
+        snapshot = graph.get_state(config)
+        old_messages = snapshot.values.get("messages", []) if snapshot.values else []
+
+        turn_id = get_next_turn_id(old_messages)
 
         return graph.invoke(
-            make_initial_state(question), 
+            make_initial_state(question, turn_id=turn_id), 
             config=config
         )
 
@@ -165,8 +175,12 @@ async def arun_tool_agent(
             },
             "recursion_limit": recursion_limit,
         }
+        snapshot = await graph.aget_state(config)
+        old_messages = snapshot.values.get("messages", []) if snapshot.values else []
+
+        turn_id = get_next_turn_id(old_messages)
 
         return await graph.ainvoke(
-            {"messages": [{"role": "user", "content": question}]},
+            make_initial_state(question, turn_id=turn_id),
             config=config,
         )

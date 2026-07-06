@@ -77,6 +77,19 @@ class MessageManage:
             if content:
                 chars += len(str(content))
         return chars // 2
+    
+    def compress_for_retry(self, messages: list, level: int, original_messages: list) -> list:
+        '''待完成'''
+        if level == 1:
+            return self._retry_snip_tool_messages(messages)
+
+        if level == 2:
+            return self._retry_snip_old_messages(messages)
+
+        if level == 3:
+            return self._retry_hard_trim(messages)
+
+        return messages
 
     def _history_snip(self, messages: list) -> bool:
         changed = False
@@ -247,6 +260,8 @@ class MessageManage:
                 "collapse_message_ids": set()
             }
         return self.sessions[session_key]
+    
+
 
     
 
