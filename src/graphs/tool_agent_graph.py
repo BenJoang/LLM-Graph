@@ -80,8 +80,8 @@ def build_graph(
             *messages_for_query,
         ]
 
-        #response = llm_with_tools.invoke(messages)
-        response = 
+        response = llm_with_tools.invoke(messages)
+        #response = 
         logging.info(response)
         #print(response.content)
 
