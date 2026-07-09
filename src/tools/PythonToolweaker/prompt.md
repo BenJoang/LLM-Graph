@@ -1,4 +1,4 @@
-# python_tool
+# python_tool_weaker
 
 ## DESCRIPTION
 执行指定 Python 脚本，并返回脚本的退出码、标准输出和标准错误。

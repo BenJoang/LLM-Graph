@@ -10,6 +10,7 @@ from src.tools.MemorySearch import tool as memory_search
 from src.tools.MemoryWrite import tool as memory_write
 from src.tools.PythonTool import tool as python_tool
 from src.tools.SkillTool import tool as skill_tool
+from src.tools.PythonToolweaker import tool as python_tool_weaker
 
 from langchain_core.tools import StructuredTool
 
@@ -24,6 +25,7 @@ TOOL_ENTRIES = {
     memory_write.TOOL_NAME: memory_write,
     python_tool.TOOL_NAME: python_tool,
     skill_tool.TOOL_NAME: skill_tool,
+    python_tool_weaker.TOOL_NAME: python_tool_weaker
 }
 
 TOOLS = [
@@ -35,6 +37,7 @@ TOOLS = [
     memory_write,
     python_tool,
     skill_tool,
+    python_tool_weaker
 ]
 
 

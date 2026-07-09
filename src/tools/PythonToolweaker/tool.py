@@ -4,7 +4,7 @@ import sys
 
 from pydantic import BaseModel, Field, ValidationError
 
-TOOL_NAME = "python_tool"
+TOOL_NAME = "python_tool_weaker"
 TOOL_DIR = Path(__file__).resolve().parent
 
 IS_READ_ONLY = False
