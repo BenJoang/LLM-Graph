@@ -12,7 +12,7 @@ QQ_MEMORY_DIR = BASE_DIR / "memory" / "qq_memory" / "groups"
 
 class InputSchema(BaseModel):
     group_index: str = Field(description="需要进行搜索的QQ群号")
-    limit: int = Field(default=20, description="返回的消息数量，默认为20，最大为40")
+    limit: int = Field(default=20, description="返回的消息数量，默认为20，最大为100")
     cursor: int | None = Field(default=None, description="从jsonl文件的第几行开始读取，默认为None表示从最新消息开始")
 
 class QqMessageResult(BaseModel):
@@ -20,7 +20,6 @@ class QqMessageResult(BaseModel):
     line_index: int = Field(description="消息在jsonl文件中的行号")
     user_id: int | None = Field(default=None, description="发送消息的用户ID")
     display_name: str | None = Field(default=None, description="发送消息的用户显示名称")
-    plain_text: str = Field(description="消息的纯文本内容")
     summary: str = Field(description="消息的摘要，格式为 '显示名称(用户ID): 消息内容'")
     image_urls: list[str] = Field(default_factory=list, description="消息中包含的图片URL列表")
     group_name: str | None = Field(default=None, description="消息所属的群名称")
@@ -103,8 +102,8 @@ def call(**kwargs) -> dict:
         limit = input_data.limit
         if limit <= 0:
             limit = 20
-        if limit > 40:
-            limit = 40
+        if limit > 100:
+            limit = 100
         
         if input_data.cursor is None:
             start_index = total_lines - 1
@@ -181,10 +180,8 @@ def build_message_result(record: dict, line_index: int) -> QqMessageResult:
         line_index=line_index,
         user_id=record.get("user_id"),
         display_name=record.get("display_name") or record.get("nickname") or record.get("card"),
-        plain_text=record.get("plain_text", ""),
         summary=record.get("summary", ""),
         image_urls=extract_image_urls(record),
-        group_name=record.get("group_name"),
         reply=record.get("reply"),
         message_id=record.get("message_id")
     )
@@ -225,27 +222,24 @@ def render_result_for_llm(result: dict) -> str:
         f"start_cursor: {data.start_cursor}",
         f"has_more: {data.has_more}",
         f"next_cursor: {data.next_cursor}",
-        f"群名: {group_name}",
         "消息记录：",
     ]
 
     for msg in data.messages:
-        text = msg.plain_text if msg.plain_text else msg.summary
+        text = msg.summary
         
 
         lines.append(
-            f"[第 {msg.line_index} 行] {msg.datetime} {msg.display_name}: {text}"
+            f"messageid: {msg.message_id}  发送时间：{msg.datetime} 发送用户与消息总结：{msg.display_name}: {text} "
         )
         lines.append(
-            f"messageid: {msg.message_id},reply:{msg.reply}"
+            f"reply:{msg.reply}"
         )
 
         if msg.image_urls:
             lines.append("image_urls:")
             for url in msg.image_urls:
                 lines.append(f"- {url}")
-
-        lines.append("")
 
     if data.has_more and data.next_cursor is not None:
         lines.append(
