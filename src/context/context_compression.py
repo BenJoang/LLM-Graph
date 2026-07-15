@@ -1,27 +1,10 @@
 from copy import deepcopy
 from langchain_core.messages import HumanMessage
+from collections.abc import Callable
 from typing_extensions import TypedDict
 from uuid import uuid4
 import json
 
-from src.client.mymodel_client import (
-    build_client,
-    load_profile,
-    load_prompt,
-    chat_once_nothinking,
-)
-profile = load_profile("qwen3.6")
-client = build_client(profile)
-prompt = load_prompt("collapse_compact")
-
-def summarize_context(text: str) -> str:
-    return chat_once_nothinking(
-        client=client,
-        profile=profile,
-        prompt=prompt,
-        question=text,
-        temperature=0,
-    )
 
 class CompressionSession(TypedDict):
     version: int
@@ -60,13 +43,16 @@ def dump_compression_session(session: dict) -> CompressionSession:
     }
 
 class MessageManage:
-    def __init__(self, max_tokens: int = 32768):
+    def __init__(
+            self, 
+            max_tokens: int = 32768,
+            summarize_fn: Callable[[str], str] | None = None,
+        ):
         self.max_tokens = max_tokens
+        self.summarize_fn = summarize_fn
 
         self._snip_tokens = int(max_tokens * 0.50)
         self._summarize_tokens = int(max_tokens * 0.70)
-
-        self.sessions = {}
 
         self.summarize_start = 2
         self.summarize_end = 4
@@ -273,8 +259,11 @@ class MessageManage:
 
         if not text:
             return ""
-        
-        return summarize_context(text)
+
+        if self.summarize_fn is None:
+            raise RuntimeError("MessageManage 没有配置摘要模型")
+
+        return self.summarize_fn(text)
     
     def _format_messages_for_summary(self, messages: list) -> str:
         parts = []
@@ -293,19 +282,6 @@ class MessageManage:
             )
 
         return json.dumps(parts, ensure_ascii=False, indent=2)
-
-    def _get_session(self, session_key: str):
-        if session_key not in self.sessions:
-            self.sessions[session_key] = {
-                "collapse_commits":[],
-                "collapse_message_ids": set()
-            }
-        return self.sessions[session_key]
-    
-
-
-    
-
 
 
     def _make_summary_message(self, summary_contene: str) -> HumanMessage:

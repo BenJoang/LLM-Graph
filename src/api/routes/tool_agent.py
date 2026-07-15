@@ -45,6 +45,7 @@ async def tool_agent(request: ToolAgentRequest) -> dict:
         profile_name=request.profile_name,
         recursion_limit=request.recursion_limit,
         working_dir=request.working_dir,
+        context_window_tokens = request.context_window_tokens,
     )
 
     return {

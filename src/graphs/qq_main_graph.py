@@ -1,29 +1,36 @@
 from typing import Annotated
 from typing_extensions import TypedDict
 from typing import Literal
-from pydantic import BaseModel, Field
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
+from langchain_core.messages import (
+    HumanMessage,
+    SystemMessage,
+)
+from typing_extensions import NotRequired
 
-from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
+from src.context.context_compression import (
+    MessageManage,
+    CompressionSession,
+)
+
+from src.client.mymodel_client import build_chat_model, load_profile, load_prompt
 from src.client.mymodel_client import save_graph_mdv2
 from src.tools import registry
 
 import json
-import logging
 from pathlib import Path
 
-from src.context.context_compression import MessageManage
 from src.client.mymodel_client import serialize_message
 
-message_manage = MessageManage()
 DEBUG_COMPRESS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "qq_compress_debug"
 DEBUG_COMPRESS_DIR.mkdir(parents=True, exist_ok=True)
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    compression_session: NotRequired[CompressionSession]
 
     history_messages: Annotated[list, add_messages]
     history_result: str
@@ -82,17 +89,31 @@ def route_image(state: ToolAgentState) -> Literal["tools", "done"]:
 
 
 
-def build_graph(profile_name: str = "qwen3.6"):
+def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 32768,):
     allow_image = profile_name == VISION_PROFILE_NAME
 
     profile = load_profile(profile_name)
     uuz_prompt = load_prompt("youyouzi")
     history_prompt = load_prompt("qq_memory_history")
+    collapse_prompt = load_prompt("collapse_compact")
     
 
     llm = build_chat_model(profile, temperature=0)
     chat_llm = build_chat_model(profile, temperature=1.5)
 
+    def summarize_with_main_model(text: str) -> str:
+        response = llm.invoke([
+            SystemMessage(
+                content=collapse_prompt["system"]
+            ),
+            HumanMessage(content=text),
+        ])
+
+        return str(response.content)
+    message_manage = MessageManage(
+        max_tokens=context_window_tokens,
+        summarize_fn=summarize_with_main_model,
+    )
 
     history_tools = registry.get_langchain_tools_by_names(HISTORY_TOOL_NAMES)
     history_node_llm = llm.bind_tools(history_tools)
@@ -118,7 +139,10 @@ def build_graph(profile_name: str = "qwen3.6"):
             *state["history_messages"],
         ]
 
-        messages, compressed, _ = message_manage.prepare_messages_for_query(raw_messages)
+        messages, compressed, compression_session = message_manage.prepare_messages_for_query(
+            raw_messages,
+            state.get("compression_session")
+        )
 
         save_compress_debug("history", raw_messages, messages, compressed)
 
@@ -132,7 +156,8 @@ def build_graph(profile_name: str = "qwen3.6"):
         )
 
         return {
-            "history_messages": [response]
+            "history_messages": [response],
+            "compression_session": compression_session,
         }
 
     def image_node(state: ToolAgentState) -> dict:
@@ -228,9 +253,18 @@ def build_graph(profile_name: str = "qwen3.6"):
 
 
 
-def run_qq_main_agent(group_id: str, question: str, profile_name:str = "qwen3.6", recursion_limit: int = 200) -> str:
+def run_qq_main_agent(
+        group_id: str, 
+        question: str, 
+        profile_name:str = "qwen3.6", 
+        recursion_limit: int = 200,
+        context_window_tokens: int = 32768,
+    ) -> str:
     
-    graph = build_graph(profile_name=profile_name)
+    graph = build_graph(
+        profile_name=profile_name,
+        context_window_tokens=context_window_tokens,
+    )
 
     save_graph_mdv2(
         event_type="run_start",

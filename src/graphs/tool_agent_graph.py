@@ -5,6 +5,10 @@ from pathlib import Path
 import asyncio
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langchain_core.messages import (
+    HumanMessage,
+    SystemMessage,
+)
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -25,7 +29,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DB = PROJECT_ROOT / "outputs" / "checkpoints" / "tool_agent.sqlite"
 
 #logging.basicConfig(level=logging.INFO)
-message_manage = MessageManage()
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
@@ -40,20 +43,38 @@ def build_graph(
         profile_name: str = 'qwen3.6',
         working_dir: str | None = None,
         checkpointer = None,
+        context_window_tokens: int = 32768,
 ):
     profile = load_profile(profile_name)
     prompt = load_prompt("tool_agent")
+    collapse_prompt = load_prompt("collapse_compact")
     tools = registry.get_langchain_tools_by_names(
         AGENT_TOOLS,
         injected_by_tool={
             "agenttool": {
                 "_profile_name": profile_name,
+                "_context_window_tokens": context_window_tokens
             }
         },
     )
 
     llm = build_chat_model(profile, temperature=0)
     llm_with_tools = llm.bind_tools(tools)
+
+    def summarize_with_main_model(text: str) -> str:
+        response = llm.invoke([
+            SystemMessage(
+                content=collapse_prompt["system"]
+            ),
+            HumanMessage(content=text),
+        ])
+
+        return str(response.content)
+    
+    message_manage = MessageManage(
+        max_tokens=context_window_tokens,
+        summarize_fn=summarize_with_main_model,
+    )
 
     def assistant_node(state: ToolAgentState) -> dict:
         (messages_for_query, compressed, compression_session,) = message_manage.prepare_messages_for_query(
@@ -130,6 +151,7 @@ def run_tool_agent(
     profile_name: str = "qwen3.6",
     recursion_limit: int = 200,
     working_dir: str | None = None,
+    context_window_tokens: int = 32768,
 ) -> str:
     CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
     with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
@@ -137,7 +159,8 @@ def run_tool_agent(
         graph = build_graph(
             profile_name=profile_name,
             working_dir=working_dir,
-            checkpointer=checkpointer
+            checkpointer=checkpointer,
+            context_window_tokens=context_window_tokens,
             )
         config = {
                 "configurable": {
@@ -162,6 +185,7 @@ async def arun_tool_agent(
     profile_name: str = "qwen3.6",
     recursion_limit: int = 200,
     working_dir: str | None = None,
+    context_window_tokens: int = 32768,
 ):
     CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
 
@@ -170,6 +194,7 @@ async def arun_tool_agent(
             profile_name=profile_name,
             working_dir=working_dir,
             checkpointer=checkpointer,
+            context_window_tokens=context_window_tokens,
         )
 
         config = {

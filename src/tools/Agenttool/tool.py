@@ -40,10 +40,17 @@ def validate_input(**kwargs) -> tuple[bool, str]:
 def call(**kwargs) -> dict:
     try:
         profile_name = kwargs.pop("_profile_name", "qwen3.6")
+        context_window_tokens = kwargs.pop(
+            "_context_window_tokens",
+            32768,
+        )
         input_data = InputSchema(**kwargs)
 
         from src.graphs.sub_agent_graph import build_graph
-        graph = build_graph(profile_name=profile_name)
+        graph = build_graph(
+            profile_name=profile_name,
+            context_window_tokens=context_window_tokens,
+            )
 
         result = graph.invoke(
             {

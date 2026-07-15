@@ -1,32 +1,58 @@
 from typing import Annotated
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_core.messages import (
+    HumanMessage,
+    SystemMessage,
+)
+
+from src.context.context_compression import (
+    MessageManage,
+    CompressionSession,
+)
 
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
-from src.client.mymodel_client import save_agent_trace_md
 from src.tools import registry
-from src.context.context_compression import MessageManage
 
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    compression_session: NotRequired[CompressionSession]
 
 
-def build_graph(profile_name: str = "qwen3.6"):
+def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 32768):
     profile = load_profile(profile_name)
     prompt = load_prompt("subagent")
-    message_manage = MessageManage()
+    collapse_prompt = load_prompt("collapse_compact")
+
     tools = registry.get_subagent_langchain_tools()
 
     llm = build_chat_model(profile, temperature=0)
     llm_with_tools = llm.bind_tools(tools)
+
+    def summarize_with_main_model(text: str) -> str:
+        response = llm.invoke([
+            SystemMessage(
+                content=collapse_prompt["system"]
+            ),
+            HumanMessage(content=text),
+        ])
+
+        return str(response.content)
+    
+    message_manage = MessageManage(
+        max_tokens=context_window_tokens,
+        summarize_fn=summarize_with_main_model,
+    )
+
     def assistant_node(state: ToolAgentState) -> dict:
 
-        messages_for_query, compressed, _ = message_manage.prepare_messages_for_query(
-            state["messages"]
+        messages_for_query, compressed, compression_session = message_manage.prepare_messages_for_query(
+            state["messages"],
+            state.get("compression_session")
         )
 
         messages = [
@@ -49,7 +75,8 @@ def build_graph(profile_name: str = "qwen3.6"):
             filename="subagent_steps.md",
         )
         return {
-            "messages": [response]
+            "messages": [response],
+            "compression_session": compression_session,
         }
 
     builder = StateGraph(ToolAgentState)
@@ -71,6 +98,4 @@ def build_graph(profile_name: str = "qwen3.6"):
     builder.add_edge("tools", "assistant")
 
     return builder.compile()
-
-graph = build_graph()
 
