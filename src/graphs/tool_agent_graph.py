@@ -20,6 +20,8 @@ from src.tools import registry
 from src.context.message_context import(
     get_next_turn_id,
     make_initial_state,
+    build_turn_aware_tool_node,
+    mark_ai_message,
 )
 from src.context.context_compression import MessageManage, CompressionSession
 from src.context.context_builder import build_system_context
@@ -104,6 +106,11 @@ def build_graph(
         ]
 
         response = llm_with_tools.invoke(messages)
+
+        response = mark_ai_message(
+            response,
+            turn_id=state["turn_id"],
+        )
         #response = 
         logging.info(response)
         #print(response.content)
@@ -128,7 +135,7 @@ def build_graph(
     builder = StateGraph(ToolAgentState)
 
     builder.add_node("assistant", assistant_node)
-    builder.add_node("tools", ToolNode(tools))
+    builder.add_node("tools", build_turn_aware_tool_node(tools))
 
     builder.add_edge(START, "assistant")
 

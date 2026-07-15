@@ -1,5 +1,7 @@
 from typing import Any
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langgraph.prebuilt import ToolNode
+from langchain_core.runnables import RunnableConfig
 
 CONTEXT_STATE_KEY = "personal_context_state"
 
@@ -72,3 +74,42 @@ def mark_ai_message(
     )
 
     return message
+
+def mark_tool_message(
+    message: ToolMessage,
+    *,
+    turn_id: int,
+) -> ToolMessage:
+    set_context_state(
+        message,
+        turn_id=turn_id,
+    )
+    return message
+
+def build_turn_aware_tool_node(tools):
+    raw_tool_node = ToolNode(tools)
+
+    def tools_node(
+            state: dict,
+            config: RunnableConfig,
+            ) -> dict:
+        result = raw_tool_node.invoke(
+            state,
+            config=config
+        )
+
+        messages = result.get("messages", [])
+
+        for message in messages:
+            if isinstance(message, ToolMessage):
+                mark_tool_message(
+                    message,
+                    turn_id=state["turn_id"],
+                )
+
+        return {
+            **result,
+            "messages": messages,
+        }
+
+    return tools_node

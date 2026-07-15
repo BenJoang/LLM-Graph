@@ -105,7 +105,7 @@ class MessageManage:
                 chars += len(str(content))
         return chars // 2
     
-    def compress_for_retry(self, messages: list, level: int, original_messages: list) -> list:
+    def compress_for_retry(self, messages: list,  original_messages: list, level: int) -> list:
         '''待完成'''
         if level == 1:
             return self._retry_snip_tool_messages(messages)
