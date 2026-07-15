@@ -118,7 +118,7 @@ def build_graph(profile_name: str = "qwen3.6"):
             *state["history_messages"],
         ]
 
-        messages, compressed = message_manage.prepare_messages_for_query(raw_messages)
+        messages, compressed, _ = message_manage.prepare_messages_for_query(raw_messages)
 
         save_compress_debug("history", raw_messages, messages, compressed)
 

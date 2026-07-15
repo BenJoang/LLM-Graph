@@ -1,5 +1,5 @@
 from typing import Annotated
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 import logging
 from pathlib import Path
 import asyncio
@@ -17,7 +17,7 @@ from src.context.message_context import(
     get_next_turn_id,
     make_initial_state,
 )
-from src.context.context_compression import MessageManage
+from src.context.context_compression import MessageManage, CompressionSession
 from src.context.context_builder import build_system_context
 from src.context.invoke_retry import invoke_with_retry
 
@@ -30,6 +30,7 @@ message_manage = MessageManage()
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
     turn_id: int
+    compression_session: NotRequired[CompressionSession]
 
 AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool", "skill_tool"]
 SKILLS = ["wuxiwaterskill"]
@@ -55,8 +56,9 @@ def build_graph(
     llm_with_tools = llm.bind_tools(tools)
 
     def assistant_node(state: ToolAgentState) -> dict:
-        messages_for_query, compressed = message_manage.prepare_messages_for_query(
-            state["messages"]
+        (messages_for_query, compressed, compression_session,) = message_manage.prepare_messages_for_query(
+            state["messages"],
+            state.get("compression_session")
         )
         
         context_system = build_system_context(
@@ -98,7 +100,8 @@ def build_graph(
             filename="new_tool_agent_steps.md",
         )
         return {
-            "messages": [response]
+            "messages": [response],
+            "compression_session": compression_session,
         }
                 
     builder = StateGraph(ToolAgentState)

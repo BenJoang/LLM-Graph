@@ -1,5 +1,6 @@
 from copy import deepcopy
 from langchain_core.messages import HumanMessage
+from typing_extensions import TypedDict
 from uuid import uuid4
 import json
 
@@ -22,6 +23,42 @@ def summarize_context(text: str) -> str:
         temperature=0,
     )
 
+class CompressionSession(TypedDict):
+    version: int
+    collapse_commits: list[dict]
+    collapse_message_ids: list[str]
+
+def make_empty_compression_session() -> CompressionSession:
+    return {
+        "version": 1,
+        "collapse_commits": [],
+        "collapse_message_ids": [],
+    }
+
+def load_compression_session(session: CompressionSession | None) -> dict:
+    session = session or make_empty_compression_session()
+
+    return {
+        "collapse_commits": deepcopy(
+            session.get("collapse_commits", [])
+        ),
+        "collapse_message_ids": set(
+            session.get("collapse_message_ids", [])
+        ),
+    }
+
+
+def dump_compression_session(session: dict) -> CompressionSession:
+    return {
+        "version": 1,
+        "collapse_commits": deepcopy(
+            session["collapse_commits"]
+        ),
+        "collapse_message_ids": sorted(
+            session["collapse_message_ids"]
+        ),
+    }
+
 class MessageManage:
     def __init__(self, max_tokens: int = 32768):
         self.max_tokens = max_tokens
@@ -40,11 +77,11 @@ class MessageManage:
 
         self.cutoff = 2
 
-    def prepare_messages_for_query(self, messages: list, session_key: str = "default") -> tuple[list, bool]:
+    def prepare_messages_for_query(self, messages: list, compression_session: CompressionSession | None = None) -> tuple[list, bool, CompressionSession]:
         compressed = False
         current_tokens = self.estimate_tokens(messages)
 
-        session = self._get_session(session_key)
+        session = load_compression_session(compression_session)
 
         #if current_tokens <= self._snip_tokens:
         #    return messages, compressed
@@ -64,7 +101,11 @@ class MessageManage:
                 compressed = True
                 current_tokens = self.estimate_tokens(messages_for_query)
 
-        return messages_for_query, compressed
+        return (
+            messages_for_query, 
+            compressed,
+            dump_compression_session(session),
+        )
 
     def estimate_tokens(self, messages: list) -> int:
         chars = 0

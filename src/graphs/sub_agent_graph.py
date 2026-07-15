@@ -25,7 +25,7 @@ def build_graph(profile_name: str = "qwen3.6"):
     llm_with_tools = llm.bind_tools(tools)
     def assistant_node(state: ToolAgentState) -> dict:
 
-        messages_for_query, compressed = message_manage.prepare_messages_for_query(
+        messages_for_query, compressed, _ = message_manage.prepare_messages_for_query(
             state["messages"]
         )
 
