@@ -21,11 +21,15 @@ from src.context.message_context import(
     get_next_turn_id,
     make_initial_state,
     build_turn_aware_tool_node,
-    mark_ai_message,
 )
 from src.context.context_compression import MessageManage, CompressionSession
 from src.context.context_builder import build_system_context
-from src.context.invoke_retry import invoke_with_retry
+from src.context.invoke_retry import (
+    invoke_with_retry,
+)
+from src.context.compression_retry_adapter import (
+    CompressionRetryAdapter,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DB = PROJECT_ROOT / "outputs" / "checkpoints" / "tool_agent.sqlite"
@@ -105,11 +109,19 @@ def build_graph(
             *messages_for_query,
         ]
 
-        response = llm_with_tools.invoke(messages)
+        retry_adapter = CompressionRetryAdapter(
+            message_manage=message_manage,
+            compression_session=compression_session,
+            current_turn_id=state["turn_id"],
+        )
 
-        response = mark_ai_message(
-            response,
+        response = invoke_with_retry(
+            invoke_fn=llm_with_tools.invoke,
+            messages=messages,
+            original_messages=messages,
+            compress_fn=retry_adapter,
             turn_id=state["turn_id"],
+            max_context_retries=3,
         )
         #response = 
         logging.info(response)
@@ -129,7 +141,9 @@ def build_graph(
         )
         return {
             "messages": [response],
-            "compression_session": compression_session,
+            "compression_session": (
+                retry_adapter.compression_session
+            ),
         }
                 
     builder = StateGraph(ToolAgentState)
