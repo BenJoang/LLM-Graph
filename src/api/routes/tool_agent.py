@@ -17,6 +17,7 @@ class ToolAgentRequest(BaseModel):
     profile_name: str = "qwen3.6"
     recursion_limit: int = 70
     working_dir: str | None = None
+    context_window_tokens: int = 32768
 
 class LatestDischargeWarningRequest(BaseModel):
     hours: int = Field(default=2, ge=1, le=72)

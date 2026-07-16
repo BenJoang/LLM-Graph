@@ -16,10 +16,17 @@ from src.context.context_compression import (
 
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
 from src.tools import registry
+from src.context.message_context import(
+    make_initial_state,
+    build_turn_aware_tool_node,
+)
+from src.context.invoke_retry import invoke_with_retry
+from src.context.compression_retry_adapter import CompressionRetryAdapter
 
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    turn_id: int
     compression_session: NotRequired[CompressionSession]
 
 
@@ -60,7 +67,20 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
             *messages_for_query,
         ]
 
-        response = llm_with_tools.invoke(messages)
+        retry_adapter = CompressionRetryAdapter(
+            message_manage=message_manage,
+            compression_session=compression_session,
+            current_turn_id=state["turn_id"],
+        )
+
+        response = invoke_with_retry(
+            invoke_fn=llm_with_tools.invoke,
+            messages=messages,
+            original_messages=messages,
+            compress_fn=retry_adapter,
+            turn_id=state["turn_id"],
+            max_context_retries=3,
+        )
 
         save_langchain_message_md(
             response,
@@ -76,13 +96,13 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
         )
         return {
             "messages": [response],
-            "compression_session": compression_session,
+            "compression_session": retry_adapter.compression_session,
         }
 
     builder = StateGraph(ToolAgentState)
 
     builder.add_node("assistant", assistant_node)
-    builder.add_node("tools", ToolNode(tools))
+    builder.add_node("tools", build_turn_aware_tool_node(tools))
 
     builder.add_edge(START, "assistant")
 

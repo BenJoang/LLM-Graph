@@ -1,5 +1,8 @@
 from pathlib import Path
-
+from src.context.message_context import (
+    make_initial_state,
+    build_turn_aware_tool_node,
+)
 from pydantic import BaseModel, Field
 
 
@@ -51,17 +54,25 @@ def call(**kwargs) -> dict:
             profile_name=profile_name,
             context_window_tokens=context_window_tokens,
             )
-
+        '''
         result = graph.invoke(
-            {
-                "messages":[
                     {
-                        "role":"user",
-                        "content": input_data.prompt,
-                    }
-                ]
-            },
-            config={"recursion_limit":100}
+                        "messages":[
+                            {
+                                "role":"user",
+                                "content": input_data.prompt,
+                            }
+                        ]
+                    },
+                    config={"recursion_limit":100}
+                )
+        '''
+        result = graph.invoke(
+            make_initial_state(
+                input_data.prompt,
+                turn_id=1,
+            ),
+            config={"recursion_limit": 100},
         )
 
         answer = result["messages"][-1].content

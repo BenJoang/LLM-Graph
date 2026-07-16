@@ -86,8 +86,14 @@ def mark_tool_message(
     )
     return message
 
-def build_turn_aware_tool_node(tools):
-    raw_tool_node = ToolNode(tools)
+def build_turn_aware_tool_node(
+        tools,
+        messages_key: str = "messages",
+    ):
+    raw_tool_node = ToolNode(
+        tools,
+        messages_key=messages_key,
+    )
 
     def tools_node(
             state: dict,
@@ -98,7 +104,7 @@ def build_turn_aware_tool_node(tools):
             config=config
         )
 
-        messages = result.get("messages", [])
+        messages = result.get(messages_key, [])
 
         for message in messages:
             if isinstance(message, ToolMessage):
@@ -109,7 +115,7 @@ def build_turn_aware_tool_node(tools):
 
         return {
             **result,
-            "messages": messages,
+            messages_key: messages,
         }
 
     return tools_node

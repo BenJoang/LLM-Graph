@@ -24,15 +24,22 @@ import json
 from pathlib import Path
 
 from src.client.mymodel_client import serialize_message
+from src.context.message_context import(
+    make_initial_state as make_turn_initial_state,
+    build_turn_aware_tool_node,
+)
+from src.context.invoke_retry import invoke_with_retry
+from src.context.compression_retry_adapter import CompressionRetryAdapter
 
 DEBUG_COMPRESS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "qq_compress_debug"
 DEBUG_COMPRESS_DIR.mkdir(parents=True, exist_ok=True)
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
-    compression_session: NotRequired[CompressionSession]
+    turn_id: int
 
     history_messages: Annotated[list, add_messages]
+    history_compression_session: NotRequired[CompressionSession]
     history_result: str
 
     image_messages: Annotated[list, add_messages]
@@ -46,8 +53,13 @@ def make_initial_state(group_id: str, question: str) -> ToolAgentState:
         f"当前QQ群号：{group_id}\n"
         f"{question}"
     )
+    base_state = make_turn_initial_state(
+        content,
+        turn_id=1,
+    )
+
     return {
-        "messages": [{"role": "user", "content": content}],
+        **base_state,
         "history_messages": [],
         "history_result": "",
         "image_messages": [],
@@ -117,7 +129,7 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
 
     history_tools = registry.get_langchain_tools_by_names(HISTORY_TOOL_NAMES)
     history_node_llm = llm.bind_tools(history_tools)
-    history_tool_node = ToolNode(
+    history_tool_node = build_turn_aware_tool_node(
         history_tools,
         messages_key="history_messages",
     )
@@ -126,10 +138,10 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
         image_prompt = load_prompt("qq_memory_image")
         image_tools = registry.get_langchain_tools_by_names(IMAGE_TOOL_NAMES)
         image_node_llm = llm.bind_tools(image_tools)
-        image_tool_node = ToolNode(
-                image_tools,
-                messages_key="image_messages",
-            )
+        image_tool_node = build_turn_aware_tool_node(
+            image_tools,
+            messages_key="image_messages",
+        )
     
     def need_history_node(state: ToolAgentState) -> dict:
 
@@ -139,14 +151,29 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
             *state["history_messages"],
         ]
 
-        messages, compressed, compression_session = message_manage.prepare_messages_for_query(
-            raw_messages,
-            state.get("compression_session")
+        messages, compressed, compression_session = (
+            message_manage.prepare_messages_for_query(
+                raw_messages,
+                state.get("history_compression_session"),
+            )
         )
 
         save_compress_debug("history", raw_messages, messages, compressed)
 
-        response = history_node_llm.invoke(messages)
+        retry_adapter = CompressionRetryAdapter(
+            message_manage=message_manage,
+            compression_session=compression_session,
+            current_turn_id=state["turn_id"],
+        )
+
+        response = invoke_with_retry(
+            invoke_fn=history_node_llm.invoke,
+            messages=messages,
+            original_messages=messages,
+            compress_fn=retry_adapter,
+            turn_id=state["turn_id"],
+            max_context_retries=3,
+        )
         
         save_graph_mdv2(
             event_type="model",
@@ -157,7 +184,7 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
 
         return {
             "history_messages": [response],
-            "compression_session": compression_session,
+            "history_compression_session": retry_adapter.compression_session,
         }
 
     def image_node(state: ToolAgentState) -> dict:

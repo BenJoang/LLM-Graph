@@ -269,7 +269,7 @@ def has_latest_discharge_level_at_least(
 
 def build_llm_summary(site_summaries: list[dict], hours: int) -> str:
     lines = []
-    lines.append(r"过去{hours}小时水雨情摘要")
+    lines.append(f"过去{hours}小时水雨情摘要")
     lines.append(f"共统计 {len(site_summaries)} 个站点。")
 
     for index, summary in enumerate(site_summaries, start=1):

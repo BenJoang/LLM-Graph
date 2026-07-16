@@ -21,15 +21,19 @@ from src.tools import registry
 
 from src.context.context_compression import MessageManage
 from src.context.context_builder import build_system_context
+from src.context.message_context import(
+    make_initial_state,
+    build_turn_aware_tool_node,
+)
+from src.context.invoke_retry import invoke_with_retry
+from src.context.compression_retry_adapter import CompressionRetryAdapter
 
 logging.basicConfig(level=logging.INFO)
 
 class ToolAgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    turn_id: int
     compression_session: NotRequired[CompressionSession]
-
-def make_initial_state(question: str) -> ToolAgentState:
-    return {"messages": [{"role": "user", "content": question}]}
 
 AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool_weaker", "skill_tool"]
 SKILLS = ["wuxiwaterskill"]
@@ -96,7 +100,20 @@ def build_graph(
             *messages_for_query,
         ]
 
-        response = llm_with_tools.invoke(messages)
+        retry_adapter = CompressionRetryAdapter(
+            message_manage=message_manage,
+            compression_session=compression_session,
+            current_turn_id=state["turn_id"],
+        )
+
+        response = invoke_with_retry(
+            invoke_fn=llm_with_tools.invoke,
+            messages=messages,
+            original_messages=messages,
+            compress_fn=retry_adapter,
+            turn_id=state["turn_id"],
+            max_context_retries=3,
+        )
 
         save_langchain_message_md(
             response,
@@ -112,13 +129,13 @@ def build_graph(
         )
         return {
             "messages": [response],
-            "compression_session": compression_session,
+            "compression_session": retry_adapter.compression_session,
         }
                 
     builder = StateGraph(ToolAgentState)
 
     builder.add_node("assistant", assistant_node)
-    builder.add_node("tools", ToolNode(tools))
+    builder.add_node("tools", build_turn_aware_tool_node(tools))
 
     builder.add_edge(START, "assistant")
 
@@ -149,6 +166,9 @@ def run_tool_agent(
         )
 
     return graph.invoke(
-        make_initial_state(question), 
-        config={"recursion_limit": recursion_limit}
+        make_initial_state(
+            question,
+            turn_id=1,
+        ),
+        config={"recursion_limit": recursion_limit},
     )
