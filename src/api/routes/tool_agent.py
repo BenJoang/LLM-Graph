@@ -14,14 +14,14 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 
 class ToolAgentRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
-    profile_name: str = "qwen3.6"
+    profile_name: str = "qwen3.5-4b"
     recursion_limit: int = 70
     working_dir: str | None = None
     context_window_tokens: int = 32768
 
 class LatestDischargeWarningRequest(BaseModel):
-    hours: int = Field(default=2, ge=1, le=72)
-    limit: int = Field(default=2000, ge=1, le=20000)
+    hours: int = Field(default=12, ge=1, le=72)
+    limit: int = Field(default=20000, ge=1, le=20000)
     min_level: int = Field(default=3, ge=1, le=5)
 
 def extract_answer(result: Any) -> str:
@@ -62,6 +62,7 @@ async def wuxi_agent_route(request: ToolAgentRequest) -> dict:
         profile_name=request.profile_name,
         recursion_limit=request.recursion_limit,
         working_dir=request.working_dir,
+        context_window_tokens = request.context_window_tokens,
     )
 
     return {

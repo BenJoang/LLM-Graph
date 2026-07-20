@@ -5,8 +5,8 @@ from .data_process import has_latest_discharge_level_at_least
 
 def check_latest_discharge_warning(
     *,
-    hours: int = 2,
-    limit: int = 2000,
+    hours: int = 12,
+    limit: int = 20000,
     min_level: int = 3,
 ) -> dict:
     token = get_token()

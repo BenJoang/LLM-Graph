@@ -54,6 +54,8 @@ def summarize_one_site(site_data: dict) -> dict:
         "max_rader_surface_velocity": max_rader_surface_velocity,
         "max_py_surface_velocity": max_py_surface_velocity,
         "max_py_water_depth": max_py_water_depth,
+        "latest_radar": _latest_row_by_time(radar_rows),
+        "latest_discharge": _latest_valid_discharge_row(discharge_rows),
     }
 
 def _global_max(site_summaries: list[dict], row_key: str, field: str) -> tuple[str, dict] | None:
@@ -109,7 +111,7 @@ def _latest_valid_discharge_row(rows: list[dict]) -> dict | None:
 
         valid_rows.append(row)
 
-    return _latest_row(valid_rows)
+    return _latest_row_by_time(valid_rows)
 
 def _row_ts(row: dict) -> float | None:
     ts = row.get("created_ts") or row.get("ts")
@@ -147,12 +149,29 @@ def _nearest_row_by_time(rows: list[dict], target_row: dict) -> dict | None:
 
     return min(candidates, key=lambda item: item[0])[1]
 
-def _sum_rain_inst_12h_before_max_cum(rain_rows: list[dict]) -> float | None:
-    max_cum_row = _max_row(rain_rows, "rain_cum_mm")
-    if not max_cum_row:
+def _latest_row_by_time(rows: list[dict]) -> dict | None:
+    candidates = []
+
+    for row in rows:
+        row_ts = _row_ts(row)
+        if row_ts is not None:
+            candidates.append((row_ts, row))
+
+    if not candidates:
         return None
 
-    end_ts = _row_ts(max_cum_row)
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _sum_rain_inst_12h(
+    rain_rows: list[dict],
+    end_row: dict | None = None,
+) -> float | None:
+    end_row = end_row or _latest_row_by_time(rain_rows)
+    if not end_row:
+        return None
+
+    end_ts = _row_ts(end_row)
     if end_ts is None:
         return None
 
@@ -162,18 +181,14 @@ def _sum_rain_inst_12h_before_max_cum(rain_rows: list[dict]) -> float | None:
 
     for row in rain_rows:
         row_ts = _row_ts(row)
-        if row_ts is None:
-            continue
-
-        if row_ts < start_ts or row_ts > end_ts:
-            continue
-
         rain_inst = _to_float(row.get("rain_inst_mm"))
-        if rain_inst is None:
+
+        if row_ts is None or rain_inst is None:
             continue
 
-        total += rain_inst
-        has_value = True
+        if start_ts < row_ts <= end_ts:
+            total += rain_inst
+            has_value = True
 
     return total if has_value else None
 
@@ -226,17 +241,31 @@ def has_latest_discharge_level_at_least(
         radar_rows = site_data.get("radar_rows") or []
         discharge_rows = site_data.get("discharge_rows") or site_data.get("discharge") or []
 
-        latest = _latest_valid_discharge_row(discharge_rows)
-        if not latest:
+        latest_discharge = _latest_valid_discharge_row(discharge_rows)
+        latest_rain = _latest_row_by_time(rain_rows)
+        latest_radar = _latest_row_by_time(radar_rows)
+        if not latest_discharge and not latest_rain and not latest_radar:
             continue
 
-        latest_radar = _nearest_row_by_time(radar_rows, latest)
-        rain_12h_mm = _sum_rain_inst_12h_before_max_cum(rain_rows)
+        rain_12h_mm = _sum_rain_inst_12h(rain_rows, latest_rain)
 
-        water_level = _to_float(latest.get("water_level_m"))
-        average_speed = _to_float(latest.get("average_speed_mps"))
-        radar_water_level = _to_float((latest_radar or {}).get("water_depth_m"))
-        radar_flow_speed = _to_float((latest_radar or {}).get("surface_velocity_mps"))
+        water_level = _to_float(
+            (latest_discharge or {}).get("water_level_m")
+        )
+        average_speed = _to_float(
+            (latest_discharge or {}).get("average_speed_mps")
+        )
+        radar_water_level = _to_float(
+            (latest_radar or {}).get("water_depth_m")
+        )
+        radar_flow_speed = _to_float(
+            (latest_radar or {}).get("surface_velocity_mps")
+        )
+        alarm_time_row = _latest_row_by_time([
+            row
+            for row in (latest_rain, latest_radar, latest_discharge)
+            if row
+        ])
 
         try:
             level_result = match_level_strategy(
@@ -257,7 +286,16 @@ def has_latest_discharge_level_at_least(
                 "site_id": site_id,
                 "level_index": level_index,
                 "level_name": level_result.get("level_name") or "未知",
-                "time": latest.get("time_str") or latest.get("video_start_time"),
+                "time": (
+                    (alarm_time_row or {}).get("time_str")
+                    or (alarm_time_row or {}).get("video_start_time")
+                    or "时间未知"
+                ),
+                "rain_12h_mm": rain_12h_mm,
+                "matched_criteria": (
+                    (level_result.get("matched_level") or {}).get("matched_criteria")
+                    or []
+                ),
             })
 
     return {
@@ -317,7 +355,7 @@ def process_sites_for_llm(sites_data: list[dict], hours: int) -> str:
     ]
 
     if not site_summaries:
-        return r"过去{hours}小时水雨情摘要：没有获取到有效站点数据。"
+        return f"过去{hours}小时水雨情摘要：没有获取到有效站点数据。"
 
     return build_llm_summary(site_summaries, hours=hours)
 
@@ -337,24 +375,42 @@ def process_latest_discharge_for_llm(sites_data: list[dict]) -> str:
         radar_rows = site_data.get("radar_rows") or []
         discharge_rows = site_data.get("discharge_rows") or site_data.get("discharge") or []
 
-        latest = _latest_valid_discharge_row(discharge_rows)
-        if not latest:
+        latest_discharge = _latest_valid_discharge_row(discharge_rows)
+        latest_status = _latest_row_by_time(discharge_rows)
+        latest_radar = _latest_row_by_time(radar_rows)
+        latest_rain = _latest_row_by_time(rain_rows)
+
+        if not latest_discharge and not latest_status and not latest_radar and not latest_rain:
             continue
 
-        latest_radar = _nearest_row_by_time(radar_rows, latest)
-        nearest_rain = _nearest_row_by_time(rain_rows, latest)
-        rain_12h_mm = _sum_rain_inst_12h_before_max_cum(rain_rows)
+        rain_12h_mm = _sum_rain_inst_12h(rain_rows, latest_rain)
 
         
 
         parts = []
-
-        water_level = _to_float(latest.get("water_level_m"))
-        average_speed = _to_float(latest.get("average_speed_mps"))
-        flow = _to_float(latest.get("flow_m3s"))
-
-        radar_water_level = _to_float((latest_radar or {}).get("water_depth_m"))
-        radar_flow_speed = _to_float((latest_radar or {}).get("surface_velocity_mps"))
+        water_level = _to_float(
+            (latest_discharge or {}).get("water_level_m")
+        )
+        average_speed = _to_float(
+            (latest_discharge or {}).get("average_speed_mps")
+        )
+        flow = _to_float(
+            (latest_discharge or {}).get("flow_m3s")
+        )
+        radar_water_level = _to_float(
+            (latest_radar or {}).get("water_depth_m")
+        )
+        radar_flow_speed = _to_float(
+            (latest_radar or {}).get("surface_velocity_mps")
+        )
+        radar_flow = _to_float(
+            (latest_radar or {}).get("flow_m3s")
+        )
+        alarm_time_row = _latest_row_by_time([
+            row
+            for row in (latest_rain, latest_radar, latest_discharge)
+            if row
+        ])
 
         level_name = _get_level_name(
             site_id=site_id,
@@ -365,57 +421,113 @@ def process_latest_discharge_for_llm(sites_data: list[dict]) -> str:
             algorithm_flow_speed_mps=average_speed,
         )
 
-        if water_level is not None:
-            parts.append(f"算法测量水位{water_level:g}m")
-
-        if average_speed is not None:
-            parts.append(f"算法测量流速{average_speed:g}m/s")
-
-        if flow is not None:
-            parts.append(f"算法测量增量流量{flow:g}m3/s")
-
-        if not parts:
-            continue
-
-        time_str = latest.get("time_str") or latest.get("video_start_time") or "时间未知"
-        status = latest.get("status")
-
         valid_count += 1
         lines.append(f"{valid_count}. {site_id}")
         lines.append(f"- 警戒等级：{level_name}")
-        lines.append(f"- 最近测流数据：" + "，".join(parts) + f"，时间：{time_str}")
+
+        # 算法测流
+        discharge_parts = []
+
+        if water_level is not None:
+            discharge_parts.append(f"算法测量水位{water_level:g}m")
+
+        if average_speed is not None:
+            discharge_parts.append(f"算法测量流速{average_speed:g}m/s")
+
+        if flow is not None:
+            discharge_parts.append(f"算法测量流量{flow:g}m3/s")
+
+        if discharge_parts and latest_discharge:
+            discharge_time = (
+                latest_discharge.get("time_str")
+                or latest_discharge.get("video_start_time")
+                or "时间未知"
+            )
+            lines.append(
+                "- 最近有效测流数据："
+                + "，".join(discharge_parts)
+                + f"，时间：{discharge_time}"
+            )
+        else:
+            lines.append("- 最近有效测流数据：无")
+
+        # 展示最新一次测流任务状态，例如夜间 NOT_NEEDED
+        if latest_status:
+            latest_status_name = latest_status.get("status")
+            latest_message = latest_status.get("message")
+            latest_status_time = (
+                latest_status.get("time_str")
+                or latest_status.get("video_start_time")
+                or "时间未知"
+            )
+
+            if latest_status_name and latest_status_name != "OK":
+                status_text = (
+                    f"- 最新测流任务状态：{latest_status_name}"
+                    f"，时间：{latest_status_time}"
+                )
+
+                if latest_message:
+                    status_text += f"，说明：{latest_message}"
+
+                lines.append(status_text)
+
+        # 雷达数据使用最新雷达记录，不再绑定旧测流时刻
         if latest_radar:
             radar_parts = []
 
-            radar_water_depth = _to_float(latest_radar.get("water_depth_m"))
-            radar_surface_velocity = _to_float(latest_radar.get("surface_velocity_mps"))
-            radar_flow = _to_float(latest_radar.get("flow_m3s"))
+            if radar_water_level is not None:
+                radar_parts.append(
+                    f"雷达测量水深{radar_water_level:g}m"
+                )
 
-            if radar_water_depth is not None:
-                radar_parts.append(f"雷达测量水深{radar_water_depth:g}m")
+            if radar_flow_speed is not None:
+                radar_parts.append(
+                    f"雷达测量表面流速{radar_flow_speed:g}m/s"
+                )
 
-            if radar_surface_velocity is not None:
-                radar_parts.append(f"雷达测量表面流速{radar_surface_velocity:g}m/s")
+            if radar_flow is not None:
+                radar_parts.append(
+                    f"雷达测量流量{radar_flow:g}m3/s"
+                )
 
             if radar_parts:
-                radar_time_str = latest_radar.get("time_str") or "时间未知"
-                lines.append("- 相关雷达数据：" + "，".join(radar_parts) + f"，时间：{radar_time_str}")
+                radar_time = (
+                    latest_radar.get("time_str")
+                    or "时间未知"
+                )
+                lines.append(
+                    "- 最新雷达数据："
+                    + "，".join(radar_parts)
+                    + f"，时间：{radar_time}"
+                )
 
-        if nearest_rain:
-            rain_cum = _to_float(nearest_rain.get("rain_cum_mm"))
+        # 雨量必须独立输出，不能放在有效测流条件下面
+        if latest_rain:
+            rain_cum = _to_float(
+                latest_rain.get("rain_cum_mm")
+            )
+            rain_time = (
+                latest_rain.get("time_str")
+                or "时间未知"
+            )
 
             if rain_cum is not None:
-                rain_time_str = nearest_rain.get("time_str") or "时间未知"
-                lines.append(f"- 相关雨量数据：累计雨量{rain_cum:g}mm，时间：{rain_time_str}")
-            if rain_12h_mm is not None:
-                lines.append(f"- 最近12小时雨量和：{rain_12h_mm:g}mm")
+                lines.append(
+                    f"- 最新累计雨量：{rain_cum:g}mm"
+                    f"，时间：{rain_time}"
+                )
+
+        if rain_12h_mm is not None:
+            lines.append(
+                f"- 最近12小时雨量和：{rain_12h_mm:g}mm"
+            )
 
         lines.append("")
 
     if valid_count == 0:
-        return "各站点最近一次测流数据：没有获取到有效测流数据。"
+        return "各站点当前水雨情：没有获取到有效数据。"
 
     return "\n".join(lines)
-
 
 

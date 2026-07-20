@@ -36,7 +36,7 @@ class ToolAgentState(TypedDict):
     compression_session: NotRequired[CompressionSession]
 
 AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool_weaker", "skill_tool"]
-SKILLS = ["wuxiwaterskill"]
+SKILLS = ["wuxiwaterskill","floodwarnskill"]
 
 
 def build_graph(
