@@ -40,6 +40,16 @@
             "description":"根据当前问题和工具执行结果，判断是否需要更新记忆，并给出更新内容",
             "system_file":"prompts/qq_memory_update.md"
         },
+        "qq_image_review":{
+            "name":"QQ图片审核",
+            "description":"不重要了",
+            "system_file":"prompts/qq_image_review.md"
+        },
+        "qq_image_reviewllm":{
+            "name":"QQ图片审核llm",
+            "description":"不重要了",
+            "system_file":"prompts/qq_image_reviewllm.md"
+        },
         "collapse_compact":{
             "name":"历史上下文总结用",
             "description":"上下文第二层压缩时使用",
