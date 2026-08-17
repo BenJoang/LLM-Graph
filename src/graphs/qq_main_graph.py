@@ -79,7 +79,6 @@ IMAGE_TOOL_NAMES = [
     "imageread",
 ]
 
-VISION_PROFILE_NAME = "qwen3.6"
 
 
 
@@ -101,8 +100,10 @@ def route_image(state: ToolAgentState) -> Literal["tools", "done"]:
 
 
 
-def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 32768,):
-    allow_image = profile_name == VISION_PROFILE_NAME
+def build_graph(profile_name: str = "qwen3.6", 
+                vision_profile_name: str = "qwen3.8",
+                allow_image: bool = True,
+                context_window_tokens: int = 32768,):
 
     profile = load_profile(profile_name)
     uuz_prompt = load_prompt("youyouzi")
@@ -136,7 +137,14 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
 
     if allow_image:
         image_prompt = load_prompt("qq_memory_image")
-        image_tools = registry.get_langchain_tools_by_names(IMAGE_TOOL_NAMES)
+        image_tools = registry.get_langchain_tools_by_names(
+            IMAGE_TOOL_NAMES,
+            injected_by_tool={
+                "imageread": {
+                    "_profile_name": vision_profile_name,
+                },
+            },
+        )
         image_node_llm = llm.bind_tools(image_tools)
         image_tool_node = build_turn_aware_tool_node(
             image_tools,
@@ -284,12 +292,14 @@ def run_qq_main_agent(
         group_id: str, 
         question: str, 
         profile_name:str = "qwen3.6", 
+        vision_profile_name: str = "qwen3.8",
         recursion_limit: int = 200,
         context_window_tokens: int = 32768,
     ) -> str:
     
     graph = build_graph(
         profile_name=profile_name,
+        vision_profile_name=vision_profile_name,
         context_window_tokens=context_window_tokens,
     )
 

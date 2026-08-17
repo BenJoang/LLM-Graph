@@ -44,6 +44,17 @@
                 }
             }
         },
+        "qwen3.8":{
+            "model":"qwen3.8-27B",
+            "base_url_env":"QWEN38_BASE_URL",
+            "api_key_env": "QWEN38_API_KEY",
+            "support_tools": true,
+            "extra_body":{
+                "chat_template_kwargs": {
+                    "enable_thinking": false
+                }
+            }
+        },
         "qwen2-vl":{
             "model":"qwen2-vl-7b",
             "base_url_env":"QWEN36_BASE_URL",

@@ -47,6 +47,7 @@ SKILLS = ["wuxiwaterskill"]
 
 def build_graph(
         profile_name: str = 'qwen3.6',
+        vision_profile_name: str = "qwen3-vl",
         working_dir: str | None = None,
         checkpointer = None,
         context_window_tokens: int = 32768,
@@ -60,7 +61,10 @@ def build_graph(
             "agenttool": {
                 "_profile_name": profile_name,
                 "_context_window_tokens": context_window_tokens
-            }
+            },
+            "imageread": {
+                "_profile_name": vision_profile_name,
+            },
         },
     )
 
@@ -170,6 +174,7 @@ def run_tool_agent(
     question: str, 
     thread_id: str,
     profile_name: str = "qwen3.6",
+    vision_profile_name: str = "qwen3-vl",
     recursion_limit: int = 200,
     working_dir: str | None = None,
     context_window_tokens: int = 32768,
@@ -179,6 +184,7 @@ def run_tool_agent(
 
         graph = build_graph(
             profile_name=profile_name,
+            vision_profile_name=vision_profile_name,
             working_dir=working_dir,
             checkpointer=checkpointer,
             context_window_tokens=context_window_tokens,

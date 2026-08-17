@@ -6,6 +6,28 @@
 
 以及能够为自己的日常生活增加一点可以复用的小工具，娱乐小功能。
 
+## 环境安装
+
+项目使用 Python 3.12。首次使用时，需要在项目根目录自行创建虚拟环境并安装依赖。
+下面以 Conda 为例：
+
+```powershell
+conda create -n LLMv1 python=3.12 -y
+conda activate LLMv1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-LLMv1.txt
+```
+
+复制环境变量示例文件：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+然后根据 `config/user_config.json` 中所选 profile 的 `base_url_env` 和
+`api_key_env`，在 `.env` 中填写对应的模型服务地址和 API Key。本项目是模型客户端，
+本地 Qwen 模型需要另行启动兼容 OpenAI API 的推理服务；也可以直接配置 DeepSeek API。
+
 ## 幽幽子对话机器人
 
 目前QQ群聊里有一个小幽幽子机器人（不是那个大的正版幽幽子bot）
@@ -19,25 +41,44 @@
 
 ### 怎么使用tool_agent_graph
 
-`tool_agent_graph` 是带工具调用能力的 agent graph，可以通过 `run_tool_agent()` 传入问题，让模型自动选择工具并返回结果。
+`tool_agent_graph` 是带工具调用能力的 agent graph。项目根目录提供了
+`tool_agent_chat.py`，可以直接在终端中进行多轮对话，不再需要临时创建 test 脚本。
 
-示例用法：主目录创建一个test脚本
-```python
-import json
-import logging
-from pathlib import Path
-from src.graphs.tool_agent_graph import run_tool_agent 
+完成上面的环境安装和模型配置后，激活虚拟环境并启动对话：
 
-logging.basicConfig(level=logging.INFO)
-question = f"你好，介绍一下自己，你有什么能力"
+```powershell
+conda activate LLMv1
+python tool_agent_chat.py
+```
 
-result = run_tool_agent(question, recursion_limit = 50, profile_name="deepseekv4-flash")
-messages = result["messages"]
+脚本会为每次新对话生成一个 `thread_id`。对话 checkpoint 保存在
+`outputs/checkpoints/tool_agent.sqlite`，之后传入同一个 ID 即可继续原来的对话：
 
-output_path = Path(__file__).resolve().parent / "tool_agent_result.json"
+```powershell
+python tool_agent_chat.py --thread-id cli-20260817-120000-abcd1234
+```
 
-with output_path.open("w", encoding="utf-8") as f:
-    json.dump(messages, f, ensure_ascii=False, indent=2, default=str)
+也可以选择模型和 Agent 工作目录：
+
+```powershell
+python tool_agent_chat.py `
+  --profile deepseekv4-flash `
+  --vision-profile qwen3-vl `
+  --working-dir "E:\Code Program\LLM-Graph"
+```
+
+对话中支持以下命令：
+
+- `/help`：查看帮助
+- `/thread`：显示当前会话 ID
+- `/new`：创建一个空白会话
+- `/save`：将当前会话导出到 `outputs/cli_session_snapshot.json`
+- `/exit` 或 `/quit`：退出
+
+查看所有启动参数：
+
+```powershell
+python tool_agent_chat.py --help
 ```
 
 ## 开发计划
@@ -53,7 +94,7 @@ with output_path.open("w", encoding="utf-8") as f:
 - [x] 使用飞书机器人对接现在使用的平台，完成相关任务（目前使用3.6 27B完成功能）
 - [x] 增加多轮对话和支持中断以及断点续接功能（支持多轮对话之后它的checkpoints默认能实现了，不过可能跟普遍理解的断点续接不一样）
 - [x] 两层上下文机制触发仍超限时，构建三次重试，每次使用更强硬的自动压缩方法
-- [ ] 增加OCR功能，~~RAG改成用skill读取内容~~。~~然后看看能不能用3.5的小模型正常完成功能~~。
+- [x] ~~增加OCR功能~~(用qwen多模态模型就行了)，~~RAG改成用skill读取内容~~。~~然后看看能不能用3.5的小模型正常完成功能~~。
 - [ ] ~~支持skill载入~~和网上skill的使用
 - [ ] 支持把记忆写成md格式
 - [ ] 接入某个奇怪的TTS，实现日常娱乐小工具和任务安排等简单功能

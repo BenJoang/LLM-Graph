@@ -15,6 +15,8 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 class ToolAgentRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     profile_name: str = "qwen3.5-4b"
+    # Imageread 识图模型
+    vision_profile_name: str = "qwen3-vl"
     recursion_limit: int = 70
     working_dir: str | None = None
     context_window_tokens: int = 32768
@@ -44,6 +46,7 @@ async def tool_agent(request: ToolAgentRequest) -> dict:
         run_tool_agent,
         question=request.question,
         profile_name=request.profile_name,
+        vision_profile_name=request.vision_profile_name,
         recursion_limit=request.recursion_limit,
         working_dir=request.working_dir,
         context_window_tokens = request.context_window_tokens,
