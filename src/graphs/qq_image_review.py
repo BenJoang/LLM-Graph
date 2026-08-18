@@ -63,7 +63,7 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
         },
     )
 
-    def image_read_node(state: ToolAgentState) -> dict:
+    async def image_read_node(state: ToolAgentState) -> dict:
         raw_messages = [
             {
                 "role": "system",
@@ -87,7 +87,7 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
                 ]
             }
         ]
-        response = vlllm.invoke(raw_messages)
+        response = await vlllm.ainvoke(raw_messages)
         save_graph_mdv2(
             event_type="model",
             node_name="vl",
@@ -99,7 +99,7 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
             "vlmessages": [response]
         }
     
-    def review_node(state: ToolAgentState) -> dict:
+    async def review_node(state: ToolAgentState) -> dict:
         raw_messages = [
             {
                 "role": "system",
@@ -116,7 +116,7 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
             }
         ]   
 
-        output = structured_review_llm.invoke(raw_messages)
+        output = await structured_review_llm.ainvoke(raw_messages)
         parsed = output["parsed"]
         raw_response = output["raw"]
 
@@ -142,7 +142,7 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
 
     return builder.compile()
 
-def run_qq_image_review_agent(url: str,
+async def run_qq_image_review_agent(url: str,
               text: str,
               profile_name: str = "deepseekv4-flash",
               vision_profile_name: str = "qwen3.8",
@@ -154,7 +154,7 @@ def run_qq_image_review_agent(url: str,
         profile_name=profile_name,
         vision_profile_name=vision_profile_name
     )
-    result = graph.invoke(
+    result = await graph.ainvoke(
         make_initial_state(url=url, text=text),
         config={"recursion_limit": recursion_limit}
     )

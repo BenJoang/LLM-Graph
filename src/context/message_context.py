@@ -1,7 +1,7 @@
 from typing import Any
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
 from langgraph.prebuilt import ToolNode
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 
 CONTEXT_STATE_KEY = "personal_context_state"
 
@@ -87,23 +87,18 @@ def mark_tool_message(
     return message
 
 def build_turn_aware_tool_node(
-        tools,
-        messages_key: str = "messages",
-    ):
+    tools,
+    messages_key: str = "messages",
+):
     raw_tool_node = ToolNode(
         tools,
         messages_key=messages_key,
     )
 
-    def tools_node(
-            state: dict,
-            config: RunnableConfig,
-            ) -> dict:
-        result = raw_tool_node.invoke(
-            state,
-            config=config
-        )
-
+    def finish_result(
+        result: dict,
+        state: dict,
+    ) -> dict:
         messages = result.get(messages_key, [])
 
         for message in messages:
@@ -118,4 +113,30 @@ def build_turn_aware_tool_node(
             messages_key: messages,
         }
 
-    return tools_node
+    def tools_node(
+        state: dict,
+        config: RunnableConfig,
+    ) -> dict:
+        result = raw_tool_node.invoke(
+            state,
+            config=config,
+        )
+
+        return finish_result(result, state)
+
+    async def atools_node(
+        state: dict,
+        config: RunnableConfig,
+    ) -> dict:
+        result = await raw_tool_node.ainvoke(
+            state,
+            config=config,
+        )
+
+        return finish_result(result, state)
+
+    return RunnableLambda(
+        tools_node,
+        afunc=atools_node,
+        name="turn_aware_tools",
+    )

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+import asyncio
 
 from PIL import Image
 import base64
@@ -10,6 +11,7 @@ import requests
 from src.client.mymodel_client import (
             load_profile,
             build_client,
+            build_async_client,
             save_response_json,
         )
 
@@ -110,6 +112,83 @@ def call(_profile_name: str = DEFAULT_VISION_PROFILE,**kwargs) -> dict:
                 answer=answer,
             ),
         ).model_dump()
+    except Exception as e:
+        return OutputSchema(
+            ok=False,
+            error=str(e),
+            data=None,
+        ).model_dump()
+
+async def acall(_profile_name: str = DEFAULT_VISION_PROFILE,**kwargs) -> dict:
+    ok, error_message = validate_input(**kwargs)
+    if not ok:
+        return OutputSchema(
+            ok=False,
+            error=error_message,
+            data=None,
+        ).model_dump()
+
+    try:
+        input_data = InputSchema(**kwargs)
+        image_url = str(input_data.image_url)
+
+        profile = load_profile(_profile_name)
+        extra_body = dict(profile.get("extra_body") or {})
+        extra_body["mm_processor_kwargs"] = {
+            "min_pixels": 360 * 128,
+            "max_pixels": 1280 * 720,
+        }
+
+        request_data = {
+            "model": profile["model"],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": input_data.question,
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+
+
+        async with build_async_client(
+            profile,
+            timeout=180,
+        ) as client:
+            response = await client.chat.completions.create(
+                **request_data
+            )
+
+        save_response_json(
+            response, 
+            input_data.question, 
+            request_data,
+            filename="imageread_response.json")
+        
+        answer = response.choices[0].message.content or ""
+
+
+        return OutputSchema(
+            ok=True,
+            error="",
+            data=ImageReadResult(
+                image_url=input_data.image_url,
+                question=input_data.question,
+                answer=answer,
+            ),
+        ).model_dump()
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         return OutputSchema(
             ok=False,

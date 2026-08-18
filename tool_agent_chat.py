@@ -13,8 +13,8 @@ from src.graphs.tool_agent_graph import run_tool_agent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_PROFILE = "qwen3.5-9b"
-DEFAULT_VISION_PROFILE = "qwen3-vl"
+DEFAULT_PROFILE = "qwen3.8"
+DEFAULT_VISION_PROFILE = "qwen3.8"
 DEFAULT_CONTEXT_WINDOW = 32768
 DEFAULT_RECURSION_LIMIT = 200
 

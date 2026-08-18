@@ -3,7 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from datetime import datetime
 from langchain_openai import ChatOpenAI
 
@@ -47,8 +47,22 @@ def load_prompt(prompt_name: str) -> dict:
 
     return prompt
 
-def build_client(profile: dict, timeout: int = 60,) -> OpenAI:
+def build_client(
+    profile: dict,
+    timeout: int = 60,
+) -> OpenAI:
     return OpenAI(
+        base_url=profile["base_url"],
+        api_key=profile["api_key"],
+        timeout=timeout,
+    )
+
+
+def build_async_client(
+    profile: dict,
+    timeout: int = 60,
+) -> AsyncOpenAI:
+    return AsyncOpenAI(
         base_url=profile["base_url"],
         api_key=profile["api_key"],
         timeout=timeout,
@@ -550,6 +564,45 @@ def chat_once_nothinking(client: OpenAI, profile: dict, prompt: dict, question: 
     response = client.chat.completions.create(**request_data)
     save_response_json(response, question, request_data)
     return response.choices[0].message.content
+
+async def chat_once_nothinking_async(
+    client: AsyncOpenAI,
+    profile: dict,
+    prompt: dict,
+    question: str,
+    temperature: float = 1.5,
+) -> str:
+    request_data = {
+        "model": profile["model"],
+        "messages": [
+            {
+                "role": "system",
+                "content": prompt["system"],
+            },
+            {
+                "role": "user",
+                "content": question,
+            },
+        ],
+        "extra_body": {
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+            }
+        },
+        "temperature": temperature,
+    }
+
+    response = await client.chat.completions.create(
+        **request_data
+    )
+
+    save_response_json(
+        response,
+        question,
+        request_data,
+    )
+
+    return response.choices[0].message.content or ""
 
 
 def chat_stream_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.5):

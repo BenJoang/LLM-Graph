@@ -28,7 +28,7 @@ from src.context.message_context import(
     make_initial_state as make_turn_initial_state,
     build_turn_aware_tool_node,
 )
-from src.context.invoke_retry import invoke_with_retry
+from src.context.invoke_retry import  ainvoke_with_retry
 from src.context.compression_retry_adapter import CompressionRetryAdapter
 
 DEBUG_COMPRESS_DIR = Path(__file__).resolve().parents[2] / "scripts" / "qq_compress_debug"
@@ -114,8 +114,8 @@ def build_graph(profile_name: str = "qwen3.6",
     llm = build_chat_model(profile, temperature=0)
     chat_llm = build_chat_model(profile, temperature=1.0)
 
-    def summarize_with_main_model(text: str) -> str:
-        response = llm.invoke([
+    async def summarize_with_main_model(text: str) -> str:
+        response = await llm.ainvoke([
             SystemMessage(
                 content=collapse_prompt["system"]
             ),
@@ -125,7 +125,7 @@ def build_graph(profile_name: str = "qwen3.6",
         return str(response.content)
     message_manage = MessageManage(
         max_tokens=context_window_tokens,
-        summarize_fn=summarize_with_main_model,
+        asummarize_fn=summarize_with_main_model,
     )
 
     history_tools = registry.get_langchain_tools_by_names(HISTORY_TOOL_NAMES)
@@ -151,7 +151,7 @@ def build_graph(profile_name: str = "qwen3.6",
             messages_key="image_messages",
         )
     
-    def need_history_node(state: ToolAgentState) -> dict:
+    async def need_history_node(state: ToolAgentState) -> dict:
 
         raw_messages = [
             {"role": "system", "content": history_prompt["system"]},
@@ -160,7 +160,7 @@ def build_graph(profile_name: str = "qwen3.6",
         ]
 
         messages, compressed, compression_session = (
-            message_manage.prepare_messages_for_query(
+            await message_manage.aprepare_messages_for_query(
                 raw_messages,
                 state.get("history_compression_session"),
             )
@@ -174,11 +174,11 @@ def build_graph(profile_name: str = "qwen3.6",
             current_turn_id=state["turn_id"],
         )
 
-        response = invoke_with_retry(
-            invoke_fn=history_node_llm.invoke,
+        response = await ainvoke_with_retry(
+            invoke_fn=history_node_llm.ainvoke,
             messages=messages,
             original_messages=messages,
-            compress_fn=retry_adapter,
+            compress_fn=retry_adapter.acall,
             turn_id=state["turn_id"],
             max_context_retries=3,
         )
@@ -195,7 +195,7 @@ def build_graph(profile_name: str = "qwen3.6",
             "history_compression_session": retry_adapter.compression_session,
         }
 
-    def image_node(state: ToolAgentState) -> dict:
+    async def image_node(state: ToolAgentState) -> dict:
 
         last_history = state["history_messages"][-1] if state["history_messages"] else None
         last_history_content = getattr(last_history, "content", "") if last_history else ""
@@ -212,7 +212,7 @@ def build_graph(profile_name: str = "qwen3.6",
 
         messages.extend(state["image_messages"])
 
-        response = image_node_llm.invoke(messages)
+        response = await image_node_llm.ainvoke(messages)
 
         save_graph_mdv2(
             event_type="model",
@@ -225,7 +225,7 @@ def build_graph(profile_name: str = "qwen3.6",
             "image_messages": [response]
         }
 
-    def answer_node(state: ToolAgentState) -> dict:
+    async def answer_node(state: ToolAgentState) -> dict:
         last_history = state["history_messages"][-1] if state["history_messages"] else None
         last_history_content = getattr(last_history, "content", "") if last_history else ""
 
@@ -243,7 +243,7 @@ def build_graph(profile_name: str = "qwen3.6",
         if last_image_content:
             messages.append({"role": "user", "content": f"图片识别结果:{last_image_content}"})
 
-        response = chat_llm.invoke(messages)
+        response = await chat_llm.ainvoke(messages)
 
         return {
             "messages": [response]
@@ -288,7 +288,7 @@ def build_graph(profile_name: str = "qwen3.6",
 
 
 
-def run_qq_main_agent(
+async def run_qq_main_agent(
         group_id: str, 
         question: str, 
         profile_name:str = "qwen3.6", 
@@ -311,7 +311,7 @@ def run_qq_main_agent(
         filename="qq_main_graph_steps1.md",
     )
     
-    result = graph.invoke(
+    result = await graph.ainvoke(
         make_initial_state(group_id, question),
         config={"recursion_limit": recursion_limit}
     )

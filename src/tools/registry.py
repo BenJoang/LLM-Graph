@@ -11,6 +11,7 @@ from src.tools.MemoryWrite import tool as memory_write
 from src.tools.PythonTool import tool as python_tool
 from src.tools.SkillTool import tool as skill_tool
 from src.tools.PythonToolweaker import tool as python_tool_weaker
+from src.tools.Grep import tool as grep
 
 from langchain_core.tools import StructuredTool
 
@@ -25,7 +26,8 @@ TOOL_ENTRIES = {
     memory_write.TOOL_NAME: memory_write,
     python_tool.TOOL_NAME: python_tool,
     skill_tool.TOOL_NAME: skill_tool,
-    python_tool_weaker.TOOL_NAME: python_tool_weaker
+    python_tool_weaker.TOOL_NAME: python_tool_weaker,
+    grep.TOOL_NAME: grep,
 }
 
 TOOLS = [
@@ -37,7 +39,8 @@ TOOLS = [
     memory_write,
     python_tool,
     skill_tool,
-    python_tool_weaker
+    python_tool_weaker,
+    grep,
 ]
 
 
@@ -48,10 +51,29 @@ def to_langchain_tool(tool_module, injected_kwargs: dict | None = None):
         result = tool_module.call(**kwargs, **injected_kwargs)
         return tool_module.render_result_for_llm(result)
 
+    coroutine = None
+
+    if hasattr(tool_module, "acall"):
+
+        async def arun_tool(**kwargs):
+            result = await tool_module.acall(
+                **kwargs,
+                **injected_kwargs,
+            )
+
+            return tool_module.render_result_for_llm(
+                result
+            )
+
+        coroutine = arun_tool
+
     return StructuredTool.from_function(
         func=run_tool,
+        coroutine=coroutine,
         name=tool_module.TOOL_NAME,
-        description=read_tool_prompt(get_tool_dir(tool_module)),
+        description=read_tool_prompt(
+            get_tool_dir(tool_module)
+        ),
         args_schema=tool_module.InputSchema,
     )
 
