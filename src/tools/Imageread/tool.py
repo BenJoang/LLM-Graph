@@ -64,7 +64,7 @@ def call(_profile_name: str = DEFAULT_VISION_PROFILE,**kwargs) -> dict:
         client = build_client(profile, 180)
         extra_body = dict(profile.get("extra_body") or {})
         extra_body["mm_processor_kwargs"] = {
-            "min_pixels": 640 * 360,
+            "min_pixels": 360 * 128,
             "max_pixels": 1280 * 720,
         }
 

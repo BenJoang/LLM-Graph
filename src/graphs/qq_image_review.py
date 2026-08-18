@@ -42,8 +42,8 @@ def make_initial_state(url: str, text: str) -> ToolAgentState:
     }
 
 
-def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",):
-    vlprofile = load_profile("qwen3-vl")
+def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",vision_profile_name: str = "qwen3.8"):
+    vlprofile = load_profile(vision_profile_name)
     vlprompt = load_prompt("qq_image_review")
 
     llmprofile = load_profile(profile_name)
@@ -145,12 +145,14 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",):
 def run_qq_image_review_agent(url: str,
               text: str,
               profile_name: str = "deepseekv4-flash",
+              vision_profile_name: str = "qwen3.8",
               recursion_limit: int = 30) -> str:
     
     graph = build_graph(
         url=url,
         text=text,
-        profile_name=profile_name
+        profile_name=profile_name,
+        vision_profile_name=vision_profile_name
     )
     result = graph.invoke(
         make_initial_state(url=url, text=text),

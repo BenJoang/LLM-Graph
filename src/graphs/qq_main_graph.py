@@ -112,7 +112,7 @@ def build_graph(profile_name: str = "qwen3.6",
     
 
     llm = build_chat_model(profile, temperature=0)
-    chat_llm = build_chat_model(profile, temperature=1.5)
+    chat_llm = build_chat_model(profile, temperature=1.0)
 
     def summarize_with_main_model(text: str) -> str:
         response = llm.invoke([
