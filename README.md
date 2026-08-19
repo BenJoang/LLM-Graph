@@ -81,6 +81,35 @@ python tool_agent_chat.py `
 python tool_agent_chat.py --help
 ```
 
+## Windows GUI 工作台
+
+项目提供 Electron + React 桌面开发版。它会自动通过 `conda run -n LLMv1`
+启动本地 FastAPI，并使用随机端口和临时访问令牌连接后端。
+
+首次启动和后续启动都可以运行：
+
+```powershell
+.\start_gui.ps1
+```
+
+也可以手动安装和启动前端：
+
+```powershell
+npm install --prefix desktop
+npm run dev --prefix desktop
+```
+
+如果 `conda` 不在 PATH 中，可显式指定 Python：
+
+```powershell
+$env:LLM_GRAPH_PYTHON = "E:\Software\Anaconda3\envs\LLMv1\python.exe"
+.\start_gui.ps1
+```
+
+GUI 会话元数据保存在 `outputs/gui_state.sqlite`，消息 checkpoint 仍保存在
+`outputs/checkpoints/tool_agent.sqlite`。模型地址和密钥继续由 `.env` 与
+`config/user_config.json` 管理，不会写入浏览器存储。
+
 ## 开发计划
 
 - [x] 子Agent编写和正常拉起

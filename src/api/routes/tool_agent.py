@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 
 class ToolAgentRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
+    thread_id: str = Field(default_factory=lambda: f"api-{uuid4().hex}")
     profile_name: str = "qwen3.5-4b"
     # Imageread 识图模型
     vision_profile_name: str = "qwen3-vl"
@@ -45,6 +47,7 @@ async def tool_agent(request: ToolAgentRequest) -> dict:
     result = await asyncio.to_thread(
         run_tool_agent,
         question=request.question,
+        thread_id=request.thread_id,
         profile_name=request.profile_name,
         vision_profile_name=request.vision_profile_name,
         recursion_limit=request.recursion_limit,

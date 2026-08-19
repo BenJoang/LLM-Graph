@@ -75,7 +75,6 @@ HISTORY_TOOL_NAMES = [
 ]
 
 IMAGE_TOOL_NAMES = [
-    "qq_memory_search",
     "imageread",
 ]
 

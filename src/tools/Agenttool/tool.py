@@ -4,6 +4,7 @@ from src.context.message_context import (
     build_turn_aware_tool_node,
 )
 from pydantic import BaseModel, Field
+import asyncio
 
 
 TOOL_NAME = "agenttool"
@@ -87,6 +88,53 @@ def call(**kwargs) -> dict:
             )
         ).model_dump()
     
+    except Exception as e:
+        return OutputSchema(
+            ok=False,
+            error=str(e),
+            data=None,
+        ).model_dump()
+
+async def acall(**kwargs) -> dict:
+    try:
+        profile_name = kwargs.pop("_profile_name", "qwen3.6")
+        context_window_tokens = kwargs.pop(
+            "_context_window_tokens",
+            32768,
+        )
+        input_data = InputSchema(**kwargs)
+
+        from src.graphs.sub_agent_graph import build_graph
+
+        graph = build_graph(
+            profile_name=profile_name,
+            context_window_tokens=context_window_tokens,
+        )
+
+        result = await graph.ainvoke(
+            make_initial_state(
+                input_data.prompt,
+                turn_id=1,
+            ),
+            config={"recursion_limit": 100},
+        )
+
+        answer = result["messages"][-1].content
+
+        return OutputSchema(
+            ok=True,
+            error="",
+            data=AgentResult(
+                prompt=input_data.prompt,
+                answer=answer,
+                message_count=len(result["messages"]),
+            ),
+        ).model_dump()
+
+    except asyncio.CancelledError:
+        # 允许父任务取消时继续向上传播
+        raise
+
     except Exception as e:
         return OutputSchema(
             ok=False,

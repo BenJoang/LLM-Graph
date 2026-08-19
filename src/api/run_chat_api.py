@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ def main() -> None:
     uvicorn.run(
         "src.api.app:app",
         host="127.0.0.1",
-        port=8100,
+        port=int(os.environ.get("LLM_GRAPH_GUI_PORT", "8100")),
         reload=False,
         log_level="info",
     )

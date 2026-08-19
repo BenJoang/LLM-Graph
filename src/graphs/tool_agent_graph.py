@@ -1,3 +1,4 @@
+from collections.abc import Callable, Iterator
 from typing import Annotated
 from typing_extensions import TypedDict, NotRequired
 import logging
@@ -205,6 +206,53 @@ def run_tool_agent(
             make_initial_state(question, turn_id=turn_id), 
             config=config
         )
+
+
+def stream_tool_agent(
+    question: str,
+    thread_id: str,
+    profile_name: str = "qwen3.6",
+    vision_profile_name: str = "qwen3-vl",
+    recursion_limit: int = 200,
+    working_dir: str | None = None,
+    context_window_tokens: int = 32768,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Iterator[dict]:
+    """Run one turn and yield LangGraph node updates.
+
+    Cancellation is checked before the run and after every completed node. This
+    lets an in-flight model/tool call finish without advancing to another node.
+    """
+    CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
+    cancelled = should_cancel or (lambda: False)
+
+    with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
+        graph = build_graph(
+            profile_name=profile_name,
+            vision_profile_name=vision_profile_name,
+            working_dir=working_dir,
+            checkpointer=checkpointer,
+            context_window_tokens=context_window_tokens,
+        )
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": recursion_limit,
+        }
+        snapshot = graph.get_state(config)
+        old_messages = snapshot.values.get("messages", []) if snapshot.values else []
+        turn_id = get_next_turn_id(old_messages)
+
+        if cancelled():
+            return
+
+        for update in graph.stream(
+            make_initial_state(question, turn_id=turn_id),
+            config=config,
+            stream_mode="updates",
+        ):
+            yield update
+            if cancelled():
+                return
 
 async def arun_tool_agent(
     question: str,

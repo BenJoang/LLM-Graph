@@ -20,7 +20,7 @@ from src.context.message_context import(
     make_initial_state,
     build_turn_aware_tool_node,
 )
-from src.context.invoke_retry import invoke_with_retry
+from src.context.invoke_retry import ainvoke_with_retry
 from src.context.compression_retry_adapter import CompressionRetryAdapter
 
 
@@ -40,8 +40,8 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
     llm = build_chat_model(profile, temperature=0)
     llm_with_tools = llm.bind_tools(tools)
 
-    def summarize_with_main_model(text: str) -> str:
-        response = llm.invoke([
+    async def summarize_with_main_model(text: str) -> str:
+        response = await llm.ainvoke([
             SystemMessage(
                 content=collapse_prompt["system"]
             ),
@@ -52,12 +52,12 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
     
     message_manage = MessageManage(
         max_tokens=context_window_tokens,
-        summarize_fn=summarize_with_main_model,
+        asummarize_fn=summarize_with_main_model,
     )
 
-    def assistant_node(state: ToolAgentState) -> dict:
+    async def assistant_node(state: ToolAgentState) -> dict:
 
-        messages_for_query, compressed, compression_session = message_manage.prepare_messages_for_query(
+        messages_for_query, compressed, compression_session = await message_manage.aprepare_messages_for_query(
             state["messages"],
             state.get("compression_session")
         )
@@ -73,11 +73,11 @@ def build_graph(profile_name: str = "qwen3.6", context_window_tokens: int = 3276
             current_turn_id=state["turn_id"],
         )
 
-        response = invoke_with_retry(
-            invoke_fn=llm_with_tools.invoke,
+        response = await ainvoke_with_retry(
+            invoke_fn=llm_with_tools.ainvoke,
             messages=messages,
             original_messages=messages,
-            compress_fn=retry_adapter,
+            compress_fn=retry_adapter.acall,
             turn_id=state["turn_id"],
             max_context_retries=3,
         )

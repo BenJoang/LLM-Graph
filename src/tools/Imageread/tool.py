@@ -136,7 +136,7 @@ async def acall(_profile_name: str = DEFAULT_VISION_PROFILE,**kwargs) -> dict:
         extra_body = dict(profile.get("extra_body") or {})
         extra_body["mm_processor_kwargs"] = {
             "min_pixels": 360 * 128,
-            "max_pixels": 1280 * 720,
+            "max_pixels": 2560 * 1440,
         }
 
         request_data = {

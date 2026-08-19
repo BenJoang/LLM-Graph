@@ -13,7 +13,7 @@ from src.graphs.tool_agent_graph import run_tool_agent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_PROFILE = "qwen3.8"
+DEFAULT_PROFILE = "deepseekv4-flash"
 DEFAULT_VISION_PROFILE = "qwen3.8"
 DEFAULT_CONTEXT_WINDOW = 32768
 DEFAULT_RECURSION_LIMIT = 200
@@ -176,7 +176,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     main()
