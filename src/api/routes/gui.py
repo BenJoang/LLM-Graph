@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -27,7 +28,7 @@ class SessionCreate(BaseModel):
     vision_profile_name: str | None = None
     working_dir: str | None = None
     context_window_tokens: int = Field(default=32768, ge=1024, le=2_000_000)
-    recursion_limit: int = Field(default=200, ge=1, le=1000)
+    recursion_limit: int = Field(default=1000, ge=1, le=1000)
 
 
 class SessionPatch(BaseModel):
@@ -132,31 +133,65 @@ def patch_session(session_id: str, request: SessionPatch) -> dict:
 
 
 @router.post("/sessions/{session_id}/runs")
-def run_session(session_id: str, request: RunCreate):
+async def run_session(
+    session_id: str,
+    payload: RunCreate,
+    request: Request,
+):
     record = _require_session(session_id)
     if record.archived:
         raise HTTPException(status_code=409, detail="归档会话不能运行")
     try:
-        handle = run_manager.start(record, request.question.strip())
+        handle = await run_manager.start(record, payload.question.strip())
     except RunConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+
+    async def event_stream():
+        try:
+            async for event in handle.iter_sse():
+                if await request.is_disconnected():
+                    break
+                yield event
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if not handle.finished_event.is_set():
+                await asyncio.shield(
+                    run_manager.cancel(handle.run_id, wait=False)
+                )
+
     return StreamingResponse(
-        handle.iter_sse(),
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "X-Run-ID": handle.run_id,
         },
     )
 
 
 @router.post("/runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
-def cancel_run(run_id: str) -> dict:
-    handle = run_manager.cancel(run_id)
+async def cancel_run(run_id: str) -> dict:
+    handle = await run_manager.cancel(run_id)
     if handle is None:
         raise HTTPException(status_code=404, detail="运行不存在")
     return {
         "ok": True,
         "run_id": run_id,
+        "status": handle.status,
         "already_finished": handle.finished_event.is_set(),
+    }
+
+
+@router.get("/runs/{run_id}")
+async def get_run(run_id: str) -> dict:
+    handle = await run_manager.get(run_id)
+    if handle is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    return {
+        "run_id": run_id,
+        "session_id": handle.session_id,
+        "status": handle.status,
+        "finished": handle.finished_event.is_set(),
     }

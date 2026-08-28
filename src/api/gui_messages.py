@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
-from langgraph.checkpoint.sqlite import SqliteSaver
-
-from src.graphs.tool_agent_graph import CHECKPOINT_DB
+from src.persistence.checkpoints import open_checkpointer
 
 
 def _text_content(content: Any) -> str:
@@ -50,13 +47,12 @@ def message_to_dto(message: Any) -> dict:
 
 def read_thread_messages(
     thread_id: str,
-    checkpoint_db: str | Path = CHECKPOINT_DB,
 ) -> list[dict]:
-    path = Path(checkpoint_db)
-    if not path.exists():
-        return []
-    with SqliteSaver.from_conn_string(str(path)) as saver:
+    """Read the latest messages from the configured checkpoint backend."""
+
+    with open_checkpointer() as saver:
         item = saver.get_tuple({"configurable": {"thread_id": thread_id}})
+
     if item is None:
         return []
     values = item.checkpoint.get("channel_values", {})

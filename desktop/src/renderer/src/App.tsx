@@ -35,7 +35,7 @@ import {
   streamRun,
   updateSession,
 } from './api'
-import type { LiveTool, Message, Profile, Session, SessionDetail } from './types'
+import type { LiveTimelinePart, Message, Profile, Session, SessionDetail } from './types'
 import {
   applyDocumentTheme,
   normalizeThemePreference,
@@ -43,7 +43,7 @@ import {
   type ThemePreference,
 } from './theme'
 import { isNearBottom } from './scroll'
-import { buildConversationTurns, summarizeToolArgs } from './conversation'
+import { buildConversationTurns, reduceLiveTimeline, summarizeToolArgs } from './conversation'
 import {
   CONTEXT_PRESETS,
   formatContextLimit,
@@ -79,6 +79,10 @@ function formatTime(value: string) {
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
   return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+}
+
+function isAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === 'AbortError'
 }
 
 function sessionGroup(value: string) {
@@ -232,12 +236,13 @@ function ToolCard({
   )
 }
 
-function LiveRun({ steps, tools, stopping }: { steps: string[]; tools: LiveTool[]; stopping: boolean }) {
+function LiveRun({ parts, stopping }: { parts: LiveTimelinePart[]; stopping: boolean }) {
   return (
     <div className="live-run">
-      <div className="live-heading"><span className="live-pulse" /><strong>{stopping ? '等待当前步骤结束…' : 'Agent 正在工作'}</strong></div>
-      {steps.map((step, index) => <div className="live-step" key={`${index}-${step.slice(0, 20)}`}><Sparkles size={13} /><Markdown>{step}</Markdown></div>)}
-      {tools.map((tool) => <ToolCard key={tool.callId} name={tool.name} args={tool.args} content={tool.content} status={tool.status} duration={tool.duration} />)}
+      <div className="live-heading"><span className="live-pulse" /><strong>{stopping ? '正在终止当前任务…' : 'Agent 正在工作'}</strong></div>
+      {parts.map((part) => part.type === 'step'
+        ? <div className="live-step" key={part.key}><Sparkles size={13} /><Markdown>{part.content}</Markdown></div>
+        : <ToolCard key={part.key} name={part.name} args={part.args} content={part.content} status={part.status} duration={part.duration} />)}
     </div>
   )
 }
@@ -246,14 +251,12 @@ function MessageTimeline({
   messages,
   running,
   stopping,
-  liveSteps,
-  liveTools,
+  liveTimeline,
 }: {
   messages: Message[]
   running: boolean
   stopping: boolean
-  liveSteps: string[]
-  liveTools: LiveTool[]
+  liveTimeline: LiveTimelinePart[]
 }) {
   const turns = useMemo(() => buildConversationTurns(messages), [messages])
   return <div className="timeline">{turns.map((turn, turnIndex) => (
@@ -281,7 +284,7 @@ function MessageTimeline({
             </article>
           )
         })}
-        {running && turnIndex === turns.length - 1 && <LiveRun steps={liveSteps} tools={liveTools} stopping={stopping} />}
+        {running && turnIndex === turns.length - 1 && <LiveRun parts={liveTimeline} stopping={stopping} />}
       </div>
     </section>
   ))}</div>
@@ -380,8 +383,7 @@ export default function App() {
   const [running, setRunning] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [runId, setRunId] = useState<string | null>(null)
-  const [liveSteps, setLiveSteps] = useState<string[]>([])
-  const [liveTools, setLiveTools] = useState<LiveTool[]>([])
+  const [liveTimeline, setLiveTimeline] = useState<LiveTimelinePart[]>([])
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -400,16 +402,22 @@ export default function App() {
   const renameSavingRef = useRef(false)
   const limitsSavingRef = useRef(false)
   const followBottomRef = useRef(true)
+  const runAbortRef = useRef<AbortController | null>(null)
+  const liveSequenceRef = useRef(0)
   const booted = useRef(false)
+
+  useEffect(() => {
+    return () => runAbortRef.current?.abort()
+  }, [])
 
   const defaults: Defaults = useMemo(() => {
     const saved = readDefaults()
     return {
-      profile_name: saved.profile_name || profiles[0]?.name || 'deepseekv4-flash',
+      profile_name: saved.profile_name || profiles[0]?.name || 'qwen3.8-flash',
       vision_profile_name: saved.vision_profile_name || (profiles.some((item) => item.name === 'qwen3.8') ? 'qwen3.8' : profiles[0]?.name || 'qwen3-vl'),
       working_dir: saved.working_dir || detail?.session.working_dir || '',
-      context_window_tokens: saved.context_window_tokens || 32768,
-      recursion_limit: saved.recursion_limit || 200,
+      context_window_tokens: saved.context_window_tokens || 65536,
+      recursion_limit: saved.recursion_limit || 1000,
       theme: themePreference,
     }
   }, [profiles, detail?.session.working_dir, themePreference])
@@ -457,6 +465,8 @@ export default function App() {
   async function addSession() {
     if (running) return
     const session = await createSession(defaults)
+    liveSequenceRef.current = 0
+    setLiveTimeline([])
     setShowArchived(false)
     setSessions((items) => [session, ...items])
     setSelectedId(session.id)
@@ -478,7 +488,7 @@ export default function App() {
           const saved = readDefaults()
           const session = await createSession({
             ...saved,
-            profile_name: saved.profile_name || (loadedProfiles.some((item) => item.name === 'deepseekv4-flash') ? 'deepseekv4-flash' : loadedProfiles[0]?.name),
+            profile_name: saved.profile_name || (loadedProfiles.some((item) => item.name === 'qwen3.8-flash') ? 'deepseekv4-flash' : loadedProfiles[0]?.name),
             vision_profile_name: saved.vision_profile_name || (loadedProfiles.some((item) => item.name === 'qwen3.8') ? 'qwen3.8' : loadedProfiles[0]?.name),
           })
           setSessions([session])
@@ -524,7 +534,7 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (followBottomRef.current) scrollToBottom()
-  }, [detail?.messages, liveSteps, liveTools])
+  }, [detail?.messages, liveTimeline])
 
   useLayoutEffect(() => {
     if (!detail?.session.id) return
@@ -554,8 +564,8 @@ export default function App() {
     if (running || id === selectedId) return
     setSelectedId(id)
     setError(null)
-    setLiveSteps([])
-    setLiveTools([])
+    liveSequenceRef.current = 0
+    setLiveTimeline([])
     followBottomRef.current = true
     setAtBottom(true)
     setDetail(await getSession(id))
@@ -577,8 +587,8 @@ export default function App() {
     setRunning(true)
     setStopping(false)
     setRunId(null)
-    setLiveSteps([])
-    setLiveTools([])
+    liveSequenceRef.current = 0
+    setLiveTimeline([])
     setLimitsOpen(false)
     followBottomRef.current = true
     setAtBottom(true)
@@ -586,48 +596,74 @@ export default function App() {
       ...detail,
       messages: [...detail.messages, { id: `optimistic-${Date.now()}`, role: 'user', content: question, tool_calls: [] }],
     })
+    const abortController = new AbortController()
+    runAbortRef.current = abortController
     try {
       await streamRun(detail.session.id, question, ({ type, data }) => {
         if (type === 'run.started') setRunId(String(data.run_id))
         if (type === 'assistant.step') {
           const message = data.message as unknown as Message
-          if (message.content) setLiveSteps((items) => [...items, message.content].slice(-8))
+          liveSequenceRef.current += 1
+          setLiveTimeline((parts) => reduceLiveTimeline(parts, {
+            type: 'assistant.step',
+            key: `step-${liveSequenceRef.current}`,
+            content: message.content || '',
+          }))
         }
         if (type === 'tool.started') {
-          setLiveTools((items) => [...items, {
-            callId: String(data.call_id),
-            name: String(data.name),
+          liveSequenceRef.current += 1
+          setLiveTimeline((parts) => reduceLiveTimeline(parts, {
+            type: 'tool.started',
+            key: `tool-${liveSequenceRef.current}`,
+            callId: String(data.call_id || ''),
+            name: String(data.name || 'tool'),
             args: (data.args || {}) as Record<string, unknown>,
-            status: 'running',
-          }])
+          }))
         }
         if (type === 'tool.finished') {
-          setLiveTools((items) => items.map((item) => item.callId === String(data.call_id) ? {
-            ...item,
+          liveSequenceRef.current += 1
+          setLiveTimeline((parts) => reduceLiveTimeline(parts, {
+            type: 'tool.finished',
+            key: `tool-result-${liveSequenceRef.current}`,
+            callId: String(data.call_id || ''),
+            name: String(data.name || 'tool'),
             content: String(data.content || ''),
             status: String(data.status || 'success'),
-            duration: data.duration_seconds as number | null,
-          } : item))
+            duration: typeof data.duration_seconds === 'number' ? data.duration_seconds : null,
+          }))
         }
         if (type === 'run.error') setError(String(data.error))
+        if (type === 'run.timed_out') setError(`运行超时（${String(data.timeout_seconds || '?')} 秒）`)
+      }, {
+        signal: abortController.signal,
+        onRunId: setRunId,
       })
       await refreshSessions(detail.session.id)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (!isAbortError(cause)) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
       setDetail(await getSession(detail.session.id))
     } finally {
+      if (runAbortRef.current === abortController) runAbortRef.current = null
       setRunning(false)
       setStopping(false)
       setRunId(null)
-      setLiveSteps([])
-      setLiveTools([])
+      liveSequenceRef.current = 0
+      setLiveTimeline([])
     }
   }
 
   async function stop() {
     if (!runId || stopping) return
     setStopping(true)
-    await cancelRun(runId).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+    try {
+      await cancelRun(runId)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      runAbortRef.current?.abort()
+    }
   }
 
   function beginRename(session: Session, location: 'sidebar' | 'header') {
@@ -741,7 +777,7 @@ export default function App() {
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             <div className="conversation-inner" ref={conversationInnerRef}>
               {detail.messages.length === 0 && <div className="empty-state"><span><Sparkles size={23} /></span><h2>开始一个新的工作流</h2><p>描述你希望 Agent 完成的任务。工具调用和执行结果会按步骤显示在这里。</p></div>}
-              <MessageTimeline messages={detail.messages} running={running} stopping={stopping} liveSteps={liveSteps} liveTools={liveTools} />
+              <MessageTimeline messages={detail.messages} running={running} stopping={stopping} liveTimeline={liveTimeline} />
               {error && <div className="error-banner"><strong>操作未完成</strong><span>{error}</span><button onClick={() => setError(null)}><X size={15} /></button></div>}
             </div>
           </div>

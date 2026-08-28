@@ -10,6 +10,8 @@ TOOL_DIR = Path(__file__).resolve().parent
 BASE_DIR = Path(__file__).resolve().parents[3]
 QQ_MEMORY_DIR = BASE_DIR / "memory" / "qq_memory" / "groups"
 
+MAX_SCAN_LINES = 1000
+
 class InputSchema(BaseModel):
     group_index: str = Field(description="需要进行搜索的QQ群号")
     limit: int = Field(default=20, description="返回的消息数量，默认为20，最大为100")
@@ -81,6 +83,7 @@ def call(**kwargs) -> dict:
                 error=f"QQ群 {input_data.group_index} 的消息记录不存在",
                 data=None,
             ).model_dump()
+
         lines = group_file.read_text(encoding="utf-8").splitlines()
         total_lines = len(lines)
 
@@ -96,18 +99,59 @@ def call(**kwargs) -> dict:
                     next_cursor=None,
                     total_lines=total_lines,
                     start_cursor=None,
-                )
+                ),
             ).model_dump()
-        
+
+        # 规范化单次读取数量
         limit = input_data.limit
+
         if limit <= 0:
             limit = 20
+
         if limit > 100:
             limit = 100
-        
+
+        # 计算当前 cursor 已经从文档末尾向前跨过多少行
+        if input_data.cursor is None:
+            already_scanned = 0
+        else:
+            # 防止 cursor 越界
+            if input_data.cursor < 1 or input_data.cursor > total_lines:
+                return OutputSchema(
+                    ok=False,
+                    error=(
+                        f"cursor 非法：{input_data.cursor}，"
+                        f"有效范围为 1 到 {total_lines}"
+                    ),
+                    data=None,
+                ).model_dump()
+
+            # cursor 是上一次已经返回的最旧行，因此需要包含 cursor 所在行
+            already_scanned = total_lines - input_data.cursor + 1
+
+        # 已经读满限制，拒绝继续调用
+        if already_scanned >= MAX_SCAN_LINES:
+            return OutputSchema(
+                ok=False,
+                error=(
+                    f"已达到 qq_memory_search 的查阅上限："
+                    f"最多允许查阅最近 {MAX_SCAN_LINES} 行记录"
+                    f"不要再进行该工具调用"
+                ),
+                data=None,
+            ).model_dump()
+
+        # 防止当前这一页越过最大读取范围
+        remaining_lines = MAX_SCAN_LINES - already_scanned
+        limit = min(limit, remaining_lines)
+
+        # 允许读取到的最旧位置，使用零基索引
+        floor_index = max(0, total_lines - MAX_SCAN_LINES)
+
         if input_data.cursor is None:
             start_index = total_lines - 1
         else:
+            # cursor 所在行已经在上一页返回，所以从它的前一行开始
             start_index = input_data.cursor - 2
 
         if start_index < 0:
@@ -122,16 +166,19 @@ def call(**kwargs) -> dict:
                     next_cursor=None,
                     total_lines=total_lines,
                     start_cursor=input_data.cursor,
-                )
+                ),
             ).model_dump()
-        
-        selected_items = []
 
+        selected_items = []
         current_index = start_index
 
-        while current_index >= 0 and len(selected_items) < limit:
-            line = lines[current_index].strip() 
-            
+        # 除了限制返回数量，也限制不能越过 floor_index
+        while (
+            current_index >= floor_index
+            and len(selected_items) < limit
+        ):
+            line = lines[current_index].strip()
+
             if not line:
                 current_index -= 1
                 continue
@@ -147,11 +194,24 @@ def call(**kwargs) -> dict:
             selected_items.append(
                 build_message_result(record, line_index)
             )
+
             current_index -= 1
-        
-        oldest_line_index = selected_items[-1].line_index if selected_items else None
-        has_more = current_index >= 0
-        next_cursor = oldest_line_index if has_more else None
+
+        oldest_line_index = (
+            selected_items[-1].line_index
+            if selected_items
+            else None
+        )
+
+        # 只判断限制范围内是否还有可读取的行
+        has_more = current_index >= floor_index
+
+        next_cursor = (
+            oldest_line_index
+            if has_more
+            else None
+        )
+
         selected_items.reverse()
 
         return OutputSchema(
@@ -165,8 +225,9 @@ def call(**kwargs) -> dict:
                 next_cursor=next_cursor,
                 total_lines=total_lines,
                 start_cursor=input_data.cursor,
-            )
+            ),
         ).model_dump()
+
     except Exception as e:
         return OutputSchema(
             ok=False,
@@ -240,10 +301,5 @@ def render_result_for_llm(result: dict) -> str:
             lines.append("image_urls:")
             for url in msg.image_urls:
                 lines.append(f"- {url}")
-
-    if data.has_more and data.next_cursor is not None:
-        lines.append(
-            f"如果当前记录不足以完成任务，请继续调用 qq_memory_search，并传入 cursor={data.next_cursor}。"
-        )
 
     return "\n".join(lines)

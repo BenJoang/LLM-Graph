@@ -51,3 +51,16 @@ export interface LiveTool {
   status: string
   duration?: number | null
 }
+
+export interface LiveTimelineStep {
+  type: 'step'
+  key: string
+  content: string
+}
+
+export interface LiveTimelineTool extends LiveTool {
+  type: 'tool'
+  key: string
+}
+
+export type LiveTimelinePart = LiveTimelineStep | LiveTimelineTool

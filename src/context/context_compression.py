@@ -71,9 +71,9 @@ class MessageManage:
         self.summarize_start = 2
         self.summarize_end = 4
 
-        self.max_tool_chars = 4000
-        self.snip_cut_head = 3
-        self.snip_cut_tail = 3
+        self.tool_head_chars = 4000
+        self.tool_tail_lines = 3
+        self.tool_tail_chars = 1000
 
         self.cutoff = 2
 
@@ -252,7 +252,7 @@ class MessageManage:
             if not isinstance(content, str):
                 continue
 
-            if len(content) <= self.max_tool_chars:
+            if len(content) <= self.tool_head_chars:
                 continue
 
             snipped_content, content_changed = (
@@ -270,28 +270,35 @@ class MessageManage:
         self,
         content: str,
     ) -> tuple[str, bool]:
-        lines = content.splitlines()
+        head_chars = self.tool_head_chars
+        tail_lines = self.tool_tail_lines
+        tail_chars = self.tool_tail_chars
 
-        # 第一步：按行裁剪。
-        if len(lines) > self.snip_cut_head + self.snip_cut_tail:
-            removed_lines = (
-                len(lines)
-                - self.snip_cut_head
-                - self.snip_cut_tail
-            )
+        if len(content) <= head_chars + tail_chars:
+            return content, False
 
-            snipped = "\n".join([
-                *lines[:self.snip_cut_head],
-                f"[tool output snipped: {removed_lines} lines removed]",
-                *lines[-self.snip_cut_tail:],
-            ])
-        else:
-            # 总行数不超过 6 行时，没有中间行可以删除。
-            snipped = content
+        head = content[:head_chars]
 
-        # 第二步：按字符数硬截断。
-        if len(snipped) > self.max_tool_chars:
-            snipped = snipped[:self.max_tool_chars]
+        lines = content.splitlines(keepends=True)
+        tail_candidate = "".join(lines[-tail_lines:])
+        tail = tail_candidate[-tail_chars:]
+
+        tail_start = len(content) - len(tail)
+
+        # 头尾已经重叠，没必要插入省略标记。
+        if tail_start <= len(head):
+            return content, False
+
+        removed_chars = tail_start - len(head)
+
+        marker = (
+            "\n"
+            f"[tool output snipped: {removed_chars} chars removed; "
+            f"last {min(tail_lines, len(lines))} lines retained]"
+            "\n"
+        )
+
+        snipped = head.rstrip("\n") + marker + tail.lstrip("\n")
 
         return snipped, snipped != content
     

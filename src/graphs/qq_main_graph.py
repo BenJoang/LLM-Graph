@@ -1,6 +1,8 @@
 from typing import Annotated
 from typing_extensions import TypedDict
 from typing import Literal
+import asyncio
+import logging
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -288,14 +290,14 @@ def build_graph(profile_name: str = "qwen3.6",
 
 
 async def run_qq_main_agent(
-        group_id: str, 
-        question: str, 
-        profile_name:str = "qwen3.6", 
-        vision_profile_name: str = "qwen3.8",
-        recursion_limit: int = 200,
-        context_window_tokens: int = 32768,
-    ) -> str:
-    
+    group_id: str,
+    question: str,
+    profile_name: str = "qwen3.6",
+    vision_profile_name: str = "qwen3.8",
+    recursion_limit: int = 30,
+    context_window_tokens: int = 32768,
+    run_timeout: float = 180,
+) -> str:
     graph = build_graph(
         profile_name=profile_name,
         vision_profile_name=vision_profile_name,
@@ -309,11 +311,30 @@ async def run_qq_main_agent(
         question=question,
         filename="qq_main_graph_steps1.md",
     )
-    
-    result = await graph.ainvoke(
-        make_initial_state(group_id, question),
-        config={"recursion_limit": recursion_limit}
-    )
+
+    try:
+        async with asyncio.timeout(run_timeout):
+            result = await graph.ainvoke(
+                make_initial_state(group_id, question),
+                config={
+                    "recursion_limit": recursion_limit,
+                },
+            )
+
+    except asyncio.CancelledError:
+        logging.info(
+            "QQ 主 Graph 被取消：group_id=%s",
+            group_id,
+        )
+        raise
+
+    except TimeoutError:
+        logging.warning(
+            "QQ 主 Graph 超时：group_id=%s timeout=%s",
+            group_id,
+            run_timeout,
+        )
+        raise
 
     save_graph_mdv2(
         event_type="run_end",
@@ -322,7 +343,14 @@ async def run_qq_main_agent(
     )
 
     final_message = result["messages"][-1]
-    return final_message.content
+    content = final_message.content or ""
+
+    if content.startswith("\r\n\r\n"):
+        content = content[4:]
+    elif content.startswith("\n\n"):
+        content = content[2:]
+
+    return content
 
 
 def save_compress_debug(node_name: str, before_messages: list, after_messages: list, compressed: bool):

@@ -1,11 +1,8 @@
-from collections.abc import Callable, Iterator
 from typing import Annotated
 from typing_extensions import TypedDict, NotRequired
 import logging
-from pathlib import Path
-import asyncio
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph.checkpoint.sqlite import SqliteSaver
+
+from src.persistence.checkpoints import open_async_checkpointer
 from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
@@ -13,7 +10,7 @@ from langchain_core.messages import (
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import tools_condition
 
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
 from src.tools import registry
@@ -25,15 +22,10 @@ from src.context.message_context import(
 )
 from src.context.context_compression import MessageManage, CompressionSession
 from src.context.context_builder import build_system_context
-from src.context.invoke_retry import (
-    invoke_with_retry,
-)
+from src.context.invoke_retry import ainvoke_with_retry
 from src.context.compression_retry_adapter import (
     CompressionRetryAdapter,
 )
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CHECKPOINT_DB = PROJECT_ROOT / "outputs" / "checkpoints" / "tool_agent.sqlite"
 
 #logging.basicConfig(level=logging.INFO)
 
@@ -72,11 +64,9 @@ def build_graph(
     llm = build_chat_model(profile, temperature=0)
     llm_with_tools = llm.bind_tools(tools)
 
-    def summarize_with_main_model(text: str) -> str:
-        response = llm.invoke([
-            SystemMessage(
-                content=collapse_prompt["system"]
-            ),
+    async def summarize_with_main_model(text: str) -> str:
+        response = await llm.ainvoke([
+            SystemMessage(content=collapse_prompt["system"]),
             HumanMessage(content=text),
         ])
 
@@ -84,11 +74,11 @@ def build_graph(
     
     message_manage = MessageManage(
         max_tokens=context_window_tokens,
-        summarize_fn=summarize_with_main_model,
+        asummarize_fn=summarize_with_main_model,
     )
 
-    def assistant_node(state: ToolAgentState) -> dict:
-        (messages_for_query, compressed, compression_session,) = message_manage.prepare_messages_for_query(
+    async def assistant_node(state: ToolAgentState) -> dict:
+        (messages_for_query, compressed, compression_session,) = await message_manage.aprepare_messages_for_query(
             state["messages"],
             state.get("compression_session")
         )
@@ -120,11 +110,11 @@ def build_graph(
             current_turn_id=state["turn_id"],
         )
 
-        response = invoke_with_retry(
-            invoke_fn=llm_with_tools.invoke,
+        response = await ainvoke_with_retry(
+            invoke_fn=llm_with_tools.ainvoke,
             messages=messages,
             original_messages=messages,
-            compress_fn=retry_adapter,
+            compress_fn=retry_adapter.acall,
             turn_id=state["turn_id"],
             max_context_retries=3,
         )
@@ -171,102 +161,20 @@ def build_graph(
 
     return builder.compile(checkpointer=checkpointer)
 
-def run_tool_agent(
-    question: str, 
-    thread_id: str,
-    profile_name: str = "qwen3.6",
-    vision_profile_name: str = "qwen3-vl",
-    recursion_limit: int = 200,
-    working_dir: str | None = None,
-    context_window_tokens: int = 32768,
-) -> str:
-    CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
-    with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
-
-        graph = build_graph(
-            profile_name=profile_name,
-            vision_profile_name=vision_profile_name,
-            working_dir=working_dir,
-            checkpointer=checkpointer,
-            context_window_tokens=context_window_tokens,
-            )
-        config = {
-                "configurable": {
-                    "thread_id": thread_id,
-                },
-                "recursion_limit": recursion_limit,
-            }
-        
-        snapshot = graph.get_state(config)
-        old_messages = snapshot.values.get("messages", []) if snapshot.values else []
-
-        turn_id = get_next_turn_id(old_messages)
-
-        return graph.invoke(
-            make_initial_state(question, turn_id=turn_id), 
-            config=config
-        )
-
-
-def stream_tool_agent(
+async def astream_tool_agent(
+    *,
     question: str,
     thread_id: str,
-    profile_name: str = "qwen3.6",
-    vision_profile_name: str = "qwen3-vl",
-    recursion_limit: int = 200,
-    working_dir: str | None = None,
-    context_window_tokens: int = 32768,
-    should_cancel: Callable[[], bool] | None = None,
-) -> Iterator[dict]:
-    """Run one turn and yield LangGraph node updates.
-
-    Cancellation is checked before the run and after every completed node. This
-    lets an in-flight model/tool call finish without advancing to another node.
-    """
-    CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
-    cancelled = should_cancel or (lambda: False)
-
-    with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
-        graph = build_graph(
-            profile_name=profile_name,
-            vision_profile_name=vision_profile_name,
-            working_dir=working_dir,
-            checkpointer=checkpointer,
-            context_window_tokens=context_window_tokens,
-        )
-        config = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": recursion_limit,
-        }
-        snapshot = graph.get_state(config)
-        old_messages = snapshot.values.get("messages", []) if snapshot.values else []
-        turn_id = get_next_turn_id(old_messages)
-
-        if cancelled():
-            return
-
-        for update in graph.stream(
-            make_initial_state(question, turn_id=turn_id),
-            config=config,
-            stream_mode="updates",
-        ):
-            yield update
-            if cancelled():
-                return
-
-async def arun_tool_agent(
-    question: str,
-    thread_id: str,
-    profile_name: str = "qwen3.6",
-    recursion_limit: int = 200,
-    working_dir: str | None = None,
-    context_window_tokens: int = 32768,
+    profile_name: str,
+    vision_profile_name: str,
+    recursion_limit: int,
+    working_dir: str | None,
+    context_window_tokens: int,
 ):
-    CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
-
-    async with AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
+    async with open_async_checkpointer() as checkpointer:
         graph = build_graph(
             profile_name=profile_name,
+            vision_profile_name=vision_profile_name,
             working_dir=working_dir,
             checkpointer=checkpointer,
             context_window_tokens=context_window_tokens,
@@ -278,9 +186,51 @@ async def arun_tool_agent(
             },
             "recursion_limit": recursion_limit,
         }
-        snapshot = await graph.aget_state(config)
-        old_messages = snapshot.values.get("messages", []) if snapshot.values else []
 
+        snapshot = await graph.aget_state(config)
+        old_messages = (
+            snapshot.values.get("messages", [])
+            if snapshot.values
+            else []
+        )
+        turn_id = get_next_turn_id(old_messages)
+
+        async for update in graph.astream(
+            make_initial_state(question, turn_id=turn_id),
+            config=config,
+            stream_mode="updates",
+        ):
+            yield update
+
+async def arun_tool_agent(
+    question: str,
+    thread_id: str,
+    profile_name: str = "qwen3.6",
+    vision_profile_name: str = "qwen3-vl",
+    recursion_limit: int = 200,
+    working_dir: str | None = None,
+    context_window_tokens: int = 32768,
+):
+    async with open_async_checkpointer() as checkpointer:
+        graph = build_graph(
+            profile_name=profile_name,
+            vision_profile_name=vision_profile_name,
+            working_dir=working_dir,
+            checkpointer=checkpointer,
+            context_window_tokens=context_window_tokens,
+        )
+
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": recursion_limit,
+        }
+
+        snapshot = await graph.aget_state(config)
+        old_messages = (
+            snapshot.values.get("messages", [])
+            if snapshot.values
+            else []
+        )
         turn_id = get_next_turn_id(old_messages)
 
         return await graph.ainvoke(

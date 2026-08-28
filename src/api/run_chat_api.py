@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -10,10 +11,13 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
     
 def main() -> None:
+    loop = asyncio.SelectorEventLoop if sys.platform == "win32" else "auto"
+
     uvicorn.run(
         "src.api.app:app",
         host="127.0.0.1",
         port=int(os.environ.get("LLM_GRAPH_GUI_PORT", "8100")),
+        loop=loop,
         reload=False,
         log_level="info",
     )

@@ -1,14 +1,23 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes.chat import router as chat_router
-from src.api.routes.gui import router as gui_router
+from src.api.routes.gui import router as gui_router, run_manager
 from src.api.routes.health import router as health_router
 from src.api.routes.tool_agent import router as tool_agent_router
+from src.persistence.checkpoints import setup_checkpoint_backend
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await setup_checkpoint_backend()
+    yield
+    await run_manager.shutdown()
 
-app = FastAPI(title="Local LLM API")
+
+app = FastAPI(title="Local LLM API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,6 +26,7 @@ app.add_middleware(
     ),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Run-ID"],
 )
 
 app.include_router(health_router)

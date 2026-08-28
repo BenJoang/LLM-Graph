@@ -1,11 +1,9 @@
-import asyncio
-
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from src.client.mymodel_client import (
-    build_client,
-    chat_once_nothinking,
+    build_async_client,
+    chat_once_nothinking_async,
     load_profile,
     load_prompt,
 )
@@ -20,15 +18,14 @@ async def chat(request: ChatRequest) -> dict:
     
     profile = load_profile("qwen3.6")
     prompt = load_prompt("default")
-    client = build_client(profile, timeout=180)
 
-    answer = await asyncio.to_thread(
-        chat_once_nothinking,
-        client,
-        profile,
-        prompt,
-        request.question,
-    )
+    async with build_async_client(profile, timeout=180) as client:
+        answer = await chat_once_nothinking_async(
+            client,
+            profile,
+            prompt,
+            request.question,
+        )
 
     return {
         "ok": True,

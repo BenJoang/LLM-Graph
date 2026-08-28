@@ -62,6 +62,10 @@ export async function streamRun(
   sessionId: string,
   question: string,
   onEvent: (event: StreamEvent) => void,
+  options: {
+    signal?: AbortSignal
+    onRunId?: (runId: string) => void
+  } = {},
 ) {
   const backend = await connection()
   const response = await fetch(`${backend.baseUrl}/api/sessions/${sessionId}/runs`, {
@@ -71,12 +75,16 @@ export async function streamRun(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ question }),
+    signal: options.signal,
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }))
     throw new Error(body.detail || `运行失败：${response.status}`)
   }
   if (!response.body) throw new Error('后端没有返回事件流')
+
+  const headerRunId = response.headers.get('X-Run-ID')
+  if (headerRunId) options.onRunId?.(headerRunId)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

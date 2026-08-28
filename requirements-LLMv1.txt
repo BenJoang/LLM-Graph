@@ -1,27 +1,30 @@
 # Agent and model clients
-langchain-core==1.5.5
-langchain-openai==1.5.1
-langgraph==1.2.11
-langgraph-checkpoint-sqlite==3.1.1
-openai==3.1.0
+langchain-core==1.4.0
+langchain-openai==1.2.1
+langgraph==1.2.0
+openai==2.37.0
 
-# SQLite checkpoints
+# Checkpoint backends (SQLite is the default)
+langgraph-checkpoint-sqlite==3.1.0
+langgraph-checkpoint-postgres==3.1.2
 aiosqlite==0.22.1
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
 
 # Configuration and validation
 pydantic==2.13.4
-python-dotenv==1.2.3
+python-dotenv==1.2.2
 python-frontmatter==1.3.0
 PyYAML==6.0.3
-typing-extensions==4.16.0
+typing-extensions==4.15.0
 
 # File, image, and HTTP tools
 httpx==0.28.1
-Pillow==12.3.0
+Pillow==12.2.0
 python-docx==1.2.0
 requests==2.34.2
 
 # HTTP API
-fastapi==0.141.1
-uvicorn==0.52.3
+fastapi==0.136.1
+uvicorn==0.47.0
 

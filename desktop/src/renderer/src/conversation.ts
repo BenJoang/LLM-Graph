@@ -1,4 +1,4 @@
-import type { Message, ToolCall } from './types'
+import type { LiveTimelinePart, Message, ToolCall } from './types'
 
 export interface TimelineToolPart {
   type: 'tool'
@@ -17,6 +17,11 @@ export interface TimelineTextPart {
 }
 
 export type TimelinePart = TimelineToolPart | TimelineTextPart
+
+export type LiveTimelineAction =
+  | { type: 'assistant.step'; key: string; content: string }
+  | { type: 'tool.started'; key: string; callId: string; name: string; args: Record<string, unknown> }
+  | { type: 'tool.finished'; key: string; callId: string; name: string; content: string; status: string; duration?: number | null }
 
 export interface ConversationTurn {
   key: string
@@ -114,4 +119,61 @@ export function summarizeToolArgs(args?: Record<string, unknown>, maxLength = 12
   if (!args || Object.keys(args).length === 0) return '已执行工具'
   const text = JSON.stringify(args)
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text
+}
+
+/**
+ * Applies one SSE execution event to the live timeline. Tool completion updates
+ * the matching call in place so the UI keeps the order in which work started.
+ */
+export function reduceLiveTimeline(
+  parts: LiveTimelinePart[],
+  action: LiveTimelineAction,
+): LiveTimelinePart[] {
+  if (action.type === 'assistant.step') {
+    if (!action.content.trim()) return parts
+    return [...parts, { type: 'step', key: action.key, content: action.content }]
+  }
+
+  if (action.type === 'tool.started') {
+    const existingIndex = action.callId
+      ? parts.findIndex((part) => part.type === 'tool' && part.callId === action.callId)
+      : -1
+    const nextTool: LiveTimelinePart = {
+      type: 'tool',
+      key: action.key,
+      callId: action.callId,
+      name: action.name,
+      args: action.args,
+      status: 'running',
+    }
+    if (existingIndex < 0) return [...parts, nextTool]
+    return parts.map((part, index) => index === existingIndex
+      ? { ...nextTool, key: part.key }
+      : part)
+  }
+
+  const existingIndex = action.callId
+    ? parts.findIndex((part) => part.type === 'tool' && part.callId === action.callId)
+    : -1
+  if (existingIndex < 0) {
+    return [...parts, {
+      type: 'tool',
+      key: action.key,
+      callId: action.callId,
+      name: action.name,
+      args: {},
+      content: action.content,
+      status: action.status,
+      duration: action.duration,
+    }]
+  }
+  return parts.map((part, index) => index === existingIndex && part.type === 'tool'
+    ? {
+        ...part,
+        name: action.name || part.name,
+        content: action.content,
+        status: action.status,
+        duration: action.duration,
+      }
+    : part)
 }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 import argparse
 import json
 import logging
@@ -9,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from src.client.mymodel_client import serialize_message
-from src.graphs.tool_agent_graph import run_tool_agent
+from src.graphs.tool_agent_graph import arun_tool_agent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -113,7 +115,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+async def main() -> None:
     args = parse_args()
     thread_id = args.thread_id or make_thread_id()
     latest_result: dict[str, Any] | None = None
@@ -159,7 +161,7 @@ def main() -> None:
             continue
 
         try:
-            latest_result = run_tool_agent(
+            latest_result = await arun_tool_agent(
                 question=question,
                 thread_id=thread_id,
                 profile_name=args.profile,
@@ -179,4 +181,11 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    main()
+
+    if sys.platform == "win32":
+        asyncio.run(
+            main(),
+            loop_factory=asyncio.SelectorEventLoop,
+        )
+    else:
+        asyncio.run(main())

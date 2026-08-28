@@ -51,8 +51,9 @@ conda activate LLMv1
 python tool_agent_chat.py
 ```
 
-脚本会为每次新对话生成一个 `thread_id`。对话 checkpoint 保存在
-`outputs/checkpoints/tool_agent.sqlite`，之后传入同一个 ID 即可继续原来的对话：
+脚本会为每次新对话生成一个 `thread_id`。默认情况下，对话 checkpoint 保存在
+`outputs/checkpoints/tool_agent.sqlite`。之后使用相同的 checkpoint 后端并传入同一个
+ID，即可继续原来的对话：
 
 ```powershell
 python tool_agent_chat.py --thread-id cli-20260817-120000-abcd1234
@@ -81,6 +82,34 @@ python tool_agent_chat.py `
 python tool_agent_chat.py --help
 ```
 
+### Checkpoint 存储后端
+
+项目默认使用 SQLite，不需要额外启动数据库。`.env.example` 中的默认配置为：
+
+```dotenv
+LLM_GRAPH_CHECKPOINT_BACKEND=sqlite
+LLM_GRAPH_CHECKPOINT_SQLITE_PATH=outputs/checkpoints/tool_agent.sqlite
+```
+
+如果需要让 CLI、API 和 GUI 共用 PostgreSQL checkpoint，可以启动 PostgreSQL 后在
+个人 `.env` 中配置：
+
+```dotenv
+LLM_GRAPH_CHECKPOINT_BACKEND=postgres
+LLM_GRAPH_CHECKPOINT_POSTGRES_URL=postgresql://llm_graph:<password>@127.0.0.1:5433/llm_graph?sslmode=disable
+```
+
+不要把包含真实密码的 `.env` 提交到仓库。通过 GUI 启动 FastAPI 时，应用会自动执行
+LangGraph checkpoint 数据表的初始化和升级。如果只使用命令行，第一次连接该数据库前
+可以手动执行一次：
+
+```powershell
+python -c "import asyncio; from src.persistence.checkpoints import setup_checkpoint_backend; asyncio.run(setup_checkpoint_backend())"
+```
+
+SQLite 和 PostgreSQL 中的旧会话不会自动互相迁移。切换后端后，只有目标后端中已经存在
+的 `thread_id` 才能恢复；如需查看原来的 SQLite 会话，应切回 SQLite 或单独执行数据迁移。
+
 ## Windows GUI 工作台
 
 项目提供 Electron + React 桌面开发版。它会自动通过 `conda run -n LLMv1`
@@ -106,8 +135,10 @@ $env:LLM_GRAPH_PYTHON = "E:\Software\Anaconda3\envs\LLMv1\python.exe"
 .\start_gui.ps1
 ```
 
-GUI 会话元数据保存在 `outputs/gui_state.sqlite`，消息 checkpoint 仍保存在
-`outputs/checkpoints/tool_agent.sqlite`。模型地址和密钥继续由 `.env` 与
+GUI 会话标题、模型和工作目录等元数据始终保存在 `outputs/gui_state.sqlite`。消息
+checkpoint 默认保存在 `outputs/checkpoints/tool_agent.sqlite`；当
+`LLM_GRAPH_CHECKPOINT_BACKEND=postgres` 时，消息和 graph state 改为保存在配置的
+PostgreSQL 数据库中。模型地址、数据库连接和密钥继续由 `.env` 与
 `config/user_config.json` 管理，不会写入浏览器存储。
 
 ## 开发计划
