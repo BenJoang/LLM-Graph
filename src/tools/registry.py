@@ -83,17 +83,52 @@ def get_langchain_tools() -> list:
         for tool in get_all_tools()
     ]
 
-def get_subagent_tools() -> list:
-    return [
-        tool
-        for tool in get_all_tools()
-        if tool.TOOL_NAME != "agenttool"
-    ]
-def get_subagent_langchain_tools() -> list:
-    return [
-        to_langchain_tool(tool)
-        for tool in get_subagent_tools()
-    ]
+def get_subagent_tool_names(
+    parent_tool_names: list[str] | None = None,
+) -> list[str]:
+    if parent_tool_names is None:
+        source_names = [
+            tool.TOOL_NAME
+            for tool in get_all_tools()
+        ]
+    else:
+        source_names = parent_tool_names
+
+    result: list[str] = []
+
+    for name in source_names:
+        if name == "agenttool":
+            continue
+
+        # 去重，并保持原来的工具顺序
+        if name not in result:
+            result.append(name)
+
+    return result
+
+
+def get_subagent_tools(
+    parent_tool_names: list[str] | None = None,
+) -> list:
+    tool_names = get_subagent_tool_names(
+        parent_tool_names
+    )
+
+    return get_tool_modules_by_names(tool_names)
+
+
+def get_subagent_langchain_tools(
+    parent_tool_names: list[str] | None = None,
+    injected_by_tool: dict[str, dict] | None = None,
+) -> list:
+    tool_names = get_subagent_tool_names(
+        parent_tool_names
+    )
+
+    return get_langchain_tools_by_names(
+        tool_names,
+        injected_by_tool=injected_by_tool,
+    )
 def get_tool_dir(tool_module) -> Path:
     return Path(tool_module.__file__).resolve().parent
 

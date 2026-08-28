@@ -20,20 +20,18 @@
 
 ### INPUT_RULES
 
-- `path` 必须是文件或目录的绝对路径
-- 搜索当前项目时，使用 system prompt 中 `<working-directory>` 的值
-- 也可以搜索其他位置的绝对路径
-- `keyword` 默认按普通文本匹配
-- 需要正则表达式时设置 `regex=true`
-- 使用 `include` 限制文件类型，例如 `*.py`
-- `context` 控制匹配位置前后返回多少行
-- 结果较多时使用更具体的 `path`、`include` 或 `keyword`
+- 搜索内容始终填写在 `pattern` 中。
+- 普通文本搜索使用 `match_mode="literal"`。
+- 正则表达式搜索使用 `match_mode="regex"`。
+- `match_mode` 只表示匹配模式，不能填写搜索表达式。
+- `path` 必须是绝对路径。
 
-### LIMITS
+### EXAMPLES
 
-- 默认最多返回 50 个匹配
-- 单行最多返回 500 个字符
-- 总结果存在字符限制
-- `truncated=true` 表示仍有其他结果
-- 搜索超时时应缩小 path 或 include
-- 默认遵循 `.gitignore`，且不主动搜索隐藏文件
+普通文本搜索：
+
+{"path":"E:\\project\\src","pattern":"build_graph","match_mode":"literal","include":"*.py"}
+
+正则搜索：
+
+{"path":"E:\\project\\src","pattern":"build_graph|run_agent","match_mode":"regex","include":"*.py"}

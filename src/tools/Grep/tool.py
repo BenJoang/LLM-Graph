@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 import json
@@ -16,10 +17,11 @@ DEFAULT_TIMEOUT = 20
 MAX_LINE_CHARS = 500
 
 class InputSchema(BaseModel):
-    keyword: str = Field(
+    pattern: str = Field(
+        ...,
         min_length=1,
         max_length=2000,
-        description="要查找的关键词；默认按普通文本匹配",
+        description="要搜索的普通文本或正则表达式，搜索内容始终放在此字段",
     )
     path: str = Field(
         description=(
@@ -33,9 +35,9 @@ class InputSchema(BaseModel):
         default=None,
         description='文件过滤规则，例如 "*.py" 或 "*.{py,ts}"',
     )
-    regex: bool = Field(
-        default=False,
-        description="是否把 keyword 当作正则表达式",
+    match_mode: Literal["literal", "regex"] = Field(
+        default="literal",
+        description="literal 表示普通文本匹配，regex 表示正则表达式匹配",
     )
     ignore_case: bool = Field(
         default=False,
@@ -168,7 +170,7 @@ def build_rg_command(
         "--no-messages",
     ]
 
-    if not input_data.regex:
+    if input_data.match_mode == "literal":
         command.append("--fixed-strings")
 
     if input_data.ignore_case:
@@ -182,7 +184,7 @@ def build_rg_command(
 
     command.extend([
         "--",
-        input_data.keyword,
+        input_data.pattern,
         str(target),
     ])
 
@@ -372,7 +374,7 @@ def call(**kwargs) -> dict:
         return OutputSchema(
             ok=True,
             root=str(target),
-            keyword=input_data.keyword,
+            keyword=input_data.pattern,
             matches=matches,
             count=len(matches),
             truncated=truncated,

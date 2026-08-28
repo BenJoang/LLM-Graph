@@ -35,7 +35,7 @@ class ToolAgentState(TypedDict):
     turn_id: int
     compression_session: NotRequired[CompressionSession]
 
-AGENT_TOOLS = ["read_file", "get_file", "imageread", "agenttool", "python_tool_weaker", "skill_tool"]
+AGENT_TOOLS = ["read_file", "get_file", "agenttool", "python_tool_weaker", "skill_tool"]
 SKILLS = ["wuxiwaterskill","floodwarnskill"]
 
 
@@ -47,13 +47,21 @@ def build_graph(
     profile = load_profile(profile_name)
     prompt = load_prompt("wuxi_agent")
     collapse_prompt = load_prompt("collapse_compact")
+    subagent_tool_names = [
+        name
+        for name in AGENT_TOOLS
+        if name != "agenttool"
+    ]
     tools = registry.get_langchain_tools_by_names(
         AGENT_TOOLS,
         injected_by_tool={
             "agenttool": {
-                "_profile_name": profile_name,
-                "_context_window_tokens": context_window_tokens
-            }
+            "_profile_name": profile_name,
+            "_working_dir": working_dir,
+            "_context_window_tokens": context_window_tokens,
+            "_recursion_limit": 200,
+            "_tool_names": subagent_tool_names,
+        },
         },
     )
 

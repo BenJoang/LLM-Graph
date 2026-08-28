@@ -1,7 +1,6 @@
 from pathlib import Path
 import subprocess
 import sys
-from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -16,10 +15,24 @@ DEFAULT_TIME_OUT = 30
 MAX_TIMEOUT = 120
 
 class InputSchema(BaseModel):
-    mode: Literal["script", "inline"] = "script"
+    script_path: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "执行已有脚本时提供该字段，"
+            "必须是 .py 文件绝对路径；"
+            "不能与 code 同时提供"
+        ),
+    )
 
-    script_path: str | None = Field(default=None, description="mode=script 时要执行的 .py 脚本文件绝对路径")
-    code: str | None = Field(default=None, description="mode=inline 时通过 python -c 执行的代码")
+    code: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "执行临时 Python 代码时提供该字段；"
+            "不能与 script_path 同时提供"
+        ),
+    )
 
     cwd: str | None = Field(default=None, description="执行脚本时的工作目录，默认脚本所在目录")
     args: list[str] = Field(default_factory=list,description="传给脚本或 -c 代码的 argv 参数",)
@@ -28,7 +41,7 @@ class InputSchema(BaseModel):
         default=None,
         description="指定用于执行脚本的 Python 解释器路径，例如 .venv/Scripts/python.exe；不填则使用当前系统默认 Python",
     )
-    timeout: int = Field(default=DEFAULT_TIME_OUT, description=f"超时时间，默认{DEFAULT_TIME_OUT}，最大{MAX_TIMEOUT}")
+    timeout: int = Field(default=DEFAULT_TIME_OUT,ge=1,le=MAX_TIMEOUT, description=f"超时时间，默认{DEFAULT_TIME_OUT}，最大{MAX_TIMEOUT}")
 
 class OutputSchema(BaseModel):
     ok: bool = Field(description="工具是否执行成功")
@@ -45,39 +58,47 @@ def get_output_schema() -> dict:
 def validate_input(**kwargs) -> tuple[bool, str]:
     try:
         input_data = InputSchema(**kwargs)
-        resolve_python_path(input_data.python_path)
-
-        if input_data.mode == "script":
-            if not input_data.script_path:
-                return False, "mode=script 时必须提供 script_path"
-            if input_data.code:
-                return False, "mode=script 时不能提供 code"
-            script_path = resolve_script_path(input_data.script_path)
-            resolve_cwd(input_data.cwd, script_path)
-            
-        if input_data.mode == "inline":
-            if not input_data.code:
-                return False, "mode=inline 时必须提供 code"
-            if input_data.script_path:
-                return False, "mode=inline 时不能提供 script_path"
-            resolve_inline_cwd(input_data.cwd)
-        
-        
-
     except ValidationError as e:
         return False, str(e)
-    
+
+    has_script = input_data.script_path is not None
+    has_code = input_data.code is not None
+
+    if has_script == has_code:
+        return (
+            False,
+            "必须且只能提供 script_path 或 code 之一："
+            "执行已有脚本使用 script_path；"
+            "执行临时代码使用 code",
+        )
+
+    try:
+        resolve_python_path(input_data.python_path)
+
+        if has_script:
+            script_path = resolve_script_path(
+                input_data.script_path
+            )
+            resolve_cwd(input_data.cwd, script_path)
+
+        else:
+            resolve_inline_cwd(input_data.cwd)
+
+            try:
+                compile(
+                    input_data.code,
+                    "<python_tool>",
+                    "exec",
+                )
+            except SyntaxError as e:
+                return (
+                    False,
+                    "inline Python 代码存在语法错误："
+                    f"第 {e.lineno} 行，{e.msg}",
+                )
+
     except Exception as e:
         return False, str(e)
-    
-    
-    
-    
-    if input_data.timeout <= 0:
-        return False, "timeout 必须大于0"
-    
-    if input_data.timeout > MAX_TIMEOUT:
-        return False, f"timeout 不能超过 {MAX_TIMEOUT} 秒"
 
     return True, ""
 
@@ -184,18 +205,24 @@ def call(**kwargs) -> dict:
         input_data = InputSchema(**kwargs)
         python_path = resolve_python_path(input_data.python_path)
 
-        if input_data.mode == "script":
-            script_path = resolve_script_path(input_data.script_path)
-            cwd = resolve_cwd(input_data.cwd, script_path)
+        if input_data.script_path is not None:
+            script_path = resolve_script_path(
+                input_data.script_path
+            )
+            cwd = resolve_cwd(
+                input_data.cwd,
+                script_path,
+            )
 
             command = [
                 str(python_path),
                 str(script_path),
                 *input_data.args,
             ]
-        if input_data.mode == "inline":
+
+        else:
             cwd = resolve_inline_cwd(input_data.cwd)
-            
+
             command = [
                 str(python_path),
                 "-c",
@@ -260,6 +287,8 @@ def render_result_for_llm(result: dict) -> str:
     """
     output = OutputSchema(**result)
     data = output.data if isinstance(output.data, dict) else {}
+    if not output.ok and not data:
+        return f"python_tool 输入校验失败：{output.error}"
 
     stdout = data.get("stdout", "")
     stderr = data.get("stderr", "")
@@ -291,8 +320,13 @@ def render_result_for_llm(result: dict) -> str:
     if stderr:
         lines.extend(["", "stderr:", stderr])
 
-    if not stdout and not stderr:
-        lines.append("")
-        lines.append("脚本没有输出。")
+    if output.ok and command and not stdout and not stderr:
+        lines.extend([
+            "",
+            "代码退出码为 0，但没有产生 stdout 或 stderr。",
+            "如果任务需要检查结果，请确认代码实际调用了目标函数，"
+            "并使用 print(...) 输出验证结果。",
+            "如果任务只要求产生副作用，不要重复执行。",
+        ])
 
     return "\n".join(lines)

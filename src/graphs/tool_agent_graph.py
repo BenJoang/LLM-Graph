@@ -48,12 +48,21 @@ def build_graph(
     profile = load_profile(profile_name)
     prompt = load_prompt("tool_agent")
     collapse_prompt = load_prompt("collapse_compact")
+    subagent_tool_names = [
+        name
+        for name in AGENT_TOOLS
+        if name != "agenttool"
+    ]
     tools = registry.get_langchain_tools_by_names(
         AGENT_TOOLS,
         injected_by_tool={
             "agenttool": {
                 "_profile_name": profile_name,
-                "_context_window_tokens": context_window_tokens
+                "_vision_profile_name": vision_profile_name,
+                "_working_dir": working_dir,
+                "_context_window_tokens": context_window_tokens,
+                "_recursion_limit": 200,
+                "_tool_names": subagent_tool_names,
             },
             "imageread": {
                 "_profile_name": vision_profile_name,
