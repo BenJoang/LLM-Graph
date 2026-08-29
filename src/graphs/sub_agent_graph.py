@@ -58,6 +58,9 @@ def build_graph(
             "imageread": {
                 "_profile_name": vision_profile_name,
             },
+            "shell_tool": {
+                "_working_dir": working_dir,
+            },
         },
     )
 

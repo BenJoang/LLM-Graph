@@ -9,6 +9,7 @@ from src.tools.QqMemorySearch import tool as qq_memory_search
 from src.tools.MemorySearch import tool as memory_search
 from src.tools.MemoryWrite import tool as memory_write
 from src.tools.PythonTool import tool as python_tool
+from src.tools.ShellTool import tool as shell_tool
 from src.tools.SkillTool import tool as skill_tool
 from src.tools.PythonToolweaker import tool as python_tool_weaker
 from src.tools.Grep import tool as grep
@@ -25,6 +26,7 @@ TOOL_ENTRIES = {
     memory_search.TOOL_NAME: memory_search,
     memory_write.TOOL_NAME: memory_write,
     python_tool.TOOL_NAME: python_tool,
+    shell_tool.TOOL_NAME: shell_tool,
     skill_tool.TOOL_NAME: skill_tool,
     python_tool_weaker.TOOL_NAME: python_tool_weaker,
     grep.TOOL_NAME: grep,
@@ -38,6 +40,7 @@ TOOLS = [
     memory_search,
     memory_write,
     python_tool,
+    shell_tool,
     skill_tool,
     python_tool_weaker,
     grep,
