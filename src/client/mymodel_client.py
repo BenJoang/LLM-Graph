@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from dotenv import load_dotenv
+from copy import deepcopy
 import os
 
 from openai import OpenAI, AsyncOpenAI
@@ -20,6 +21,16 @@ def load_profile(profile_name: str) -> dict:
 
     profile = dict(config["profiles"][profile_name])
 
+    default_generation = config.get(
+        "defaults", {}
+    ).get("generation", {})
+
+    profile_generation = profile.get("generation", {})
+
+    profile["generation"] = {
+        **default_generation,
+        **profile_generation,
+    }
     base_url_env = profile.pop("base_url_env", None)
     if base_url_env:
         base_url = os.getenv(base_url_env)
@@ -68,16 +79,91 @@ def build_async_client(
         timeout=timeout,
     )
 
-def build_chat_model(profile: dict, temperature: float = 0):
+def build_chat_model(
+    profile: dict,
+    thinking: bool | None = True,
+) -> ChatOpenAI:
+    generation = profile.get("generation", {})
+
     kwargs = {
         "model": profile["model"],
         "base_url": profile["base_url"],
         "api_key": profile["api_key"],
-        "temperature": temperature,
     }
 
-    extra_body = profile.get("extra_body")
-    if extra_body is not None:
+    # OpenAI/ChatOpenAI 标准生成参数
+    for key in (
+        "temperature",
+        "top_p",
+        "presence_penalty",
+    ):
+        value = generation.get(key)
+
+        # 配置为 null 时不向模型发送
+        if value is not None:
+            kwargs[key] = value
+
+    # 必须复制，否则可能修改 profile 中的原始配置
+    extra_body = deepcopy(
+        profile.get("extra_body") or {}
+    )
+
+    chat_template_kwargs = extra_body.get(
+        "chat_template_kwargs"
+    )
+
+    # 判断配置是否已经明确指定 thinking
+    qwen_thinking_configured = (
+        isinstance(chat_template_kwargs, dict)
+        and "enable_thinking" in chat_template_kwargs
+    )
+
+    deepseek_thinking_configured = (
+        "thinking" in extra_body
+    )
+
+    thinking_configured = (
+        qwen_thinking_configured
+        or deepseek_thinking_configured
+    )
+
+    # profile 没配置时，才使用 graph 传入的 thinking
+    if thinking is not None and not thinking_configured:
+        model_name = profile["model"].lower()
+
+        if model_name.startswith("deepseek"):
+            extra_body["thinking"] = {
+                "type": (
+                    "enabled"
+                    if thinking
+                    else "disabled"
+                )
+            }
+
+        elif model_name.startswith("qwen"):
+            if chat_template_kwargs is None:
+                chat_template_kwargs = {}
+                extra_body[
+                    "chat_template_kwargs"
+                ] = chat_template_kwargs
+
+            if not isinstance(chat_template_kwargs, dict):
+                raise ValueError(
+                    "extra_body.chat_template_kwargs "
+                    "必须是一个对象"
+                )
+
+            chat_template_kwargs[
+                "enable_thinking"
+            ] = thinking
+
+        else:
+            raise ValueError(
+                "无法判断模型的 thinking 参数格式："
+                f"{profile['model']}"
+            )
+
+    if extra_body:
         kwargs["extra_body"] = extra_body
 
     return ChatOpenAI(**kwargs)

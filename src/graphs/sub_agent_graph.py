@@ -61,7 +61,7 @@ def build_graph(
         },
     )
 
-    llm = build_chat_model(profile, temperature=0)
+    llm = build_chat_model(profile)
     llm_with_tools = llm.bind_tools(tools)
 
     async def summarize_with_main_model(text: str) -> str:
@@ -166,7 +166,7 @@ def build_graph(
             tools=tools,
             request_options={
                 "model": profile["model"],
-                "temperature": 0,
+                "temperature": llm.temperature,
                 "base_url": profile["base_url"],
                 "remaining_steps": remaining_steps,
                 "status": status,

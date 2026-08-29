@@ -49,18 +49,13 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
     llmprofile = load_profile(profile_name)
     llmprompt = load_prompt("qq_image_reviewllm")
 
-    vlllm = build_chat_model(vlprofile, temperature=0)
-    review_llm = build_chat_model(llmprofile, temperature=0)
+    vlllm = build_chat_model(vlprofile)
+    review_llm = build_chat_model(llmprofile)
 
     structured_review_llm = review_llm.with_structured_output(
         ReviewResult,
         method="function_calling",
         include_raw=True,
-        extra_body={
-            "thinking": {
-                "type": "disabled"
-            }
-        },
     )
 
     async def image_read_node(state: ToolAgentState) -> dict:

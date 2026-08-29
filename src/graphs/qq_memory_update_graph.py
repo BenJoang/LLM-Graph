@@ -29,7 +29,7 @@ UPDATE_LOG_FILE = "qq_memory_update_steps.md"
 profile = load_profile("qwen3.6")
 prompt = load_prompt("qq_memory_update")
 
-llm = build_chat_model(profile, temperature=0)
+llm = build_chat_model(profile)
 
 tools = registry.get_langchain_tools_by_names(UPDATE_TOOL_NAMES)
 llm_with_tools = llm.bind_tools(tools)
