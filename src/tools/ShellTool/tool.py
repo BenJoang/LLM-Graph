@@ -187,9 +187,13 @@ async def acall(
         raise
     except Exception as error:
         fallback_cwd = input_data.cwd or _working_dir or str(Path.cwd())
+        error_message = str(error).strip()
+        error_detail = type(error).__name__
+        if error_message:
+            error_detail = f"{error_detail}: {error_message}"
         return OutputSchema(
             ok=False,
-            error=str(error),
+            error=error_detail,
             data=ShellResult(
                 status="spawn_failed",
                 command=input_data.command,

@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Literal
 from uuid import uuid4
@@ -303,6 +304,119 @@ async def finish_collectors(
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _requires_threaded_windows_subprocess() -> bool:
+    """Return whether the active Windows loop cannot create subprocesses.
+
+    Windows' SelectorEventLoop intentionally does not implement asyncio's
+    subprocess transport. The API uses that loop for async Psycopg support,
+    so shell processes must be supervised outside the active event loop.
+    """
+
+    if os.name != "nt":
+        return False
+
+    proactor_loop = getattr(asyncio, "ProactorEventLoop", None)
+    return proactor_loop is None or not isinstance(
+        asyncio.get_running_loop(),
+        proactor_loop,
+    )
+
+
+class _ProactorThreadState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task[ShellRunResult] | None = None
+        self._cancel_requested = False
+
+    def attach(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        task: asyncio.Task[ShellRunResult],
+    ) -> None:
+        with self._lock:
+            self._loop = loop
+            self._task = task
+            if self._cancel_requested:
+                loop.call_soon(task.cancel)
+
+    def request_cancel(self) -> None:
+        with self._lock:
+            self._cancel_requested = True
+            if self._loop is not None and self._task is not None:
+                self._loop.call_soon_threadsafe(self._task.cancel)
+
+    def detach(self) -> None:
+        with self._lock:
+            self._loop = None
+            self._task = None
+
+
+def _run_shell_in_proactor_thread(
+    *,
+    state: _ProactorThreadState,
+    command: str,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    max_spill_bytes: int,
+) -> ShellRunResult:
+    proactor_loop = getattr(asyncio, "ProactorEventLoop", None)
+    if proactor_loop is None:
+        raise RuntimeError("当前 Python 不提供 Windows ProactorEventLoop")
+
+    loop = proactor_loop()
+    asyncio.set_event_loop(loop)
+    task = loop.create_task(
+        run_shell(
+            command=command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            max_spill_bytes=max_spill_bytes,
+        )
+    )
+    state.attach(loop, task)
+    try:
+        return loop.run_until_complete(task)
+    finally:
+        state.detach()
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+async def _run_shell_windows_threaded(
+    *,
+    command: str,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    max_spill_bytes: int,
+) -> ShellRunResult:
+    state = _ProactorThreadState()
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            _run_shell_in_proactor_thread,
+            state=state,
+            command=command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            max_spill_bytes=max_spill_bytes,
+        )
+    )
+
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        state.request_cancel()
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            pass
+        raise
+
+
 async def run_shell(
     *,
     command: str,
@@ -311,6 +425,15 @@ async def run_shell(
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     max_spill_bytes: int = DEFAULT_MAX_SPILL_BYTES,
 ) -> ShellRunResult:
+    if _requires_threaded_windows_subprocess():
+        return await _run_shell_windows_threaded(
+            command=command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            max_spill_bytes=max_spill_bytes,
+        )
+
     shell = resolve_shell()
     creation_options: dict[str, object] = {}
     if os.name == "nt":
