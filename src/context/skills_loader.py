@@ -80,7 +80,7 @@ def format_available_skills(
     
     if include_all_skills:
         selected_skills = skills
-    elif skill_names:
+    elif skill_names is not None:
         skill_name_set = set(skill_names)
         selected_skills = [
             skill for skill in skills

@@ -21,8 +21,24 @@ READ_CHUNK_BYTES = 16 * 1024
 
 POWERSHELL_ENCODING_PREAMBLE = (
     "[Console]::OutputEncoding = "
-    "[System.Text.UTF8Encoding]::new($false); "
-    "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+    "[System.Text.UTF8Encoding]::new($false)\n"
+    "$OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
+    "if (Test-Path variable:PSStyle) {\n"
+    "    $PSStyle.OutputRendering = 'PlainText'\n"
+    "}\n"
+)
+
+POWERSHELL_EXIT_EPILOGUE = (
+    "$__llmGraphShellSuccess = $?\n"
+    "$__llmGraphShellExitCode = $global:LASTEXITCODE\n"
+    "if (-not $__llmGraphShellSuccess) {\n"
+    "    if ($null -ne $__llmGraphShellExitCode "
+    "-and $__llmGraphShellExitCode -ne 0) {\n"
+    "        exit $__llmGraphShellExitCode\n"
+    "    }\n"
+    "    exit 1\n"
+    "}\n"
+    "exit 0"
 )
 
 
@@ -36,13 +52,9 @@ class ShellInvocation:
         if self.kind == "powershell":
             wrapped_command = (
                 f"{POWERSHELL_ENCODING_PREAMBLE}"
-                "$global:LASTEXITCODE = $null; "
-                f"& {{ {command} }}; "
-                "$__llmGraphShellSuccess = $?; "
-                "$__llmGraphShellExitCode = $LASTEXITCODE; "
-                "if ($null -ne $__llmGraphShellExitCode) "
-                "{ exit $__llmGraphShellExitCode }; "
-                "if (-not $__llmGraphShellSuccess) { exit 1 }"
+                "$global:LASTEXITCODE = $null\n"
+                f"{command}\n"
+                f"{POWERSHELL_EXIT_EPILOGUE}"
             )
             return [
                 self.executable,
@@ -226,42 +238,56 @@ def resolve_workdir(
     return resolved
 
 
-async def collect_stream(
-    reader: asyncio.StreamReader,
+def collect_stream(
+    reader,
     collector: OutputCollector,
 ) -> None:
     try:
         while True:
-            chunk = await reader.read(READ_CHUNK_BYTES)
+            chunk = reader.read(READ_CHUNK_BYTES)
             if not chunk:
                 break
             collector.append(chunk)
+    except (OSError, ValueError):
+        # The supervising thread may close a pipe to unblock a reader after
+        # the process tree has been terminated.
+        pass
     finally:
+        try:
+            reader.close()
+        except OSError:
+            pass
         collector.close()
 
 
-async def terminate_process_tree(
-    process: asyncio.subprocess.Process,
+def terminate_process_tree(
+    process: subprocess.Popen,
     grace_seconds: float = DEFAULT_KILL_GRACE_SECONDS,
 ) -> None:
-    if process.returncode is not None:
+    if process.poll() is not None:
         return
 
     if os.name == "nt":
         try:
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/PID",
-                str(process.pid),
-                "/T",
-                "/F",
+            subprocess.run(
+                [
+                    "taskkill",
+                    "/PID",
+                    str(process.pid),
+                    "/T",
+                    "/F",
+                ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=grace_seconds,
             )
-            await killer.wait()
-        except (FileNotFoundError, OSError):
-            process.kill()
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
     else:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -269,171 +295,61 @@ async def terminate_process_tree(
             pass
 
         try:
-            await asyncio.wait_for(process.wait(), timeout=grace_seconds)
+            process.wait(timeout=grace_seconds)
             return
-        except TimeoutError:
+        except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
 
-    if process.returncode is None:
+    if process.poll() is None:
         try:
             process.kill()
-        except ProcessLookupError:
+        except OSError:
             pass
 
     try:
-        await asyncio.wait_for(process.wait(), timeout=grace_seconds)
-    except TimeoutError:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
         pass
 
 
-async def finish_collectors(
-    tasks: list[asyncio.Task[None]],
+def finish_collectors(
+    threads: list[threading.Thread],
+    streams: list,
     grace_seconds: float = DEFAULT_KILL_GRACE_SECONDS,
 ) -> None:
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(*tasks),
-            timeout=grace_seconds,
-        )
-    except TimeoutError:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+    for thread in threads:
+        thread.join(timeout=grace_seconds)
 
+    if all(not thread.is_alive() for thread in threads):
+        return
 
-def _requires_threaded_windows_subprocess() -> bool:
-    """Return whether the active Windows loop cannot create subprocesses.
-
-    Windows' SelectorEventLoop intentionally does not implement asyncio's
-    subprocess transport. The API uses that loop for async Psycopg support,
-    so shell processes must be supervised outside the active event loop.
-    """
-
-    if os.name != "nt":
-        return False
-
-    proactor_loop = getattr(asyncio, "ProactorEventLoop", None)
-    return proactor_loop is None or not isinstance(
-        asyncio.get_running_loop(),
-        proactor_loop,
-    )
-
-
-class _ProactorThreadState:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._task: asyncio.Task[ShellRunResult] | None = None
-        self._cancel_requested = False
-
-    def attach(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        task: asyncio.Task[ShellRunResult],
-    ) -> None:
-        with self._lock:
-            self._loop = loop
-            self._task = task
-            if self._cancel_requested:
-                loop.call_soon(task.cancel)
-
-    def request_cancel(self) -> None:
-        with self._lock:
-            self._cancel_requested = True
-            if self._loop is not None and self._task is not None:
-                self._loop.call_soon_threadsafe(self._task.cancel)
-
-    def detach(self) -> None:
-        with self._lock:
-            self._loop = None
-            self._task = None
-
-
-def _run_shell_in_proactor_thread(
-    *,
-    state: _ProactorThreadState,
-    command: str,
-    cwd: Path,
-    timeout_seconds: int,
-    max_output_bytes: int,
-    max_spill_bytes: int,
-) -> ShellRunResult:
-    proactor_loop = getattr(asyncio, "ProactorEventLoop", None)
-    if proactor_loop is None:
-        raise RuntimeError("当前 Python 不提供 Windows ProactorEventLoop")
-
-    loop = proactor_loop()
-    asyncio.set_event_loop(loop)
-    task = loop.create_task(
-        run_shell(
-            command=command,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            max_output_bytes=max_output_bytes,
-            max_spill_bytes=max_spill_bytes,
-        )
-    )
-    state.attach(loop, task)
-    try:
-        return loop.run_until_complete(task)
-    finally:
-        state.detach()
-        asyncio.set_event_loop(None)
-        loop.close()
-
-
-async def _run_shell_windows_threaded(
-    *,
-    command: str,
-    cwd: Path,
-    timeout_seconds: int,
-    max_output_bytes: int,
-    max_spill_bytes: int,
-) -> ShellRunResult:
-    state = _ProactorThreadState()
-    worker = asyncio.create_task(
-        asyncio.to_thread(
-            _run_shell_in_proactor_thread,
-            state=state,
-            command=command,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            max_output_bytes=max_output_bytes,
-            max_spill_bytes=max_spill_bytes,
-        )
-    )
-
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        state.request_cancel()
+    for stream in streams:
         try:
-            await asyncio.shield(worker)
-        except asyncio.CancelledError:
+            stream.close()
+        except OSError:
             pass
-        raise
+
+    for thread in threads:
+        if thread.is_alive():
+            thread.join(timeout=grace_seconds)
 
 
-async def run_shell(
+class _ShellRunCancelled(Exception):
+    pass
+
+
+def _run_shell_sync(
     *,
     command: str,
     cwd: Path,
     timeout_seconds: int,
-    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
-    max_spill_bytes: int = DEFAULT_MAX_SPILL_BYTES,
+    max_output_bytes: int,
+    max_spill_bytes: int,
+    cancel_requested: threading.Event,
 ) -> ShellRunResult:
-    if _requires_threaded_windows_subprocess():
-        return await _run_shell_windows_threaded(
-            command=command,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            max_output_bytes=max_output_bytes,
-            max_spill_bytes=max_spill_bytes,
-        )
-
     shell = resolve_shell()
     creation_options: dict[str, object] = {}
     if os.name == "nt":
@@ -442,17 +358,18 @@ async def run_shell(
         creation_options["start_new_session"] = True
 
     started = time.monotonic()
-    process = await asyncio.create_subprocess_exec(
-        *shell.argv(command),
+    process = subprocess.Popen(
+        shell.argv(command),
         cwd=str(cwd),
         stdin=subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
         **creation_options,
     )
 
     if process.stdout is None or process.stderr is None:
-        await terminate_process_tree(process)
+        terminate_process_tree(process)
         raise RuntimeError("无法捕获 shell 的 stdout/stderr")
 
     stdout_collector = OutputCollector(
@@ -465,31 +382,48 @@ async def run_shell(
         max_output_bytes=max_output_bytes,
         max_spill_bytes=max_spill_bytes,
     )
-    collector_tasks = [
-        asyncio.create_task(
-            collect_stream(process.stdout, stdout_collector)
+    streams = [process.stdout, process.stderr]
+    collector_threads = [
+        threading.Thread(
+            target=collect_stream,
+            args=(process.stdout, stdout_collector),
+            name="llm-graph-shell-stdout",
+            daemon=True,
         ),
-        asyncio.create_task(
-            collect_stream(process.stderr, stderr_collector)
+        threading.Thread(
+            target=collect_stream,
+            args=(process.stderr, stderr_collector),
+            name="llm-graph-shell-stderr",
+            daemon=True,
         ),
     ]
+    for thread in collector_threads:
+        thread.start()
 
     timed_out = False
+    cancelled = False
+    deadline = started + timeout_seconds
     try:
-        try:
-            await asyncio.wait_for(
-                process.wait(),
-                timeout=timeout_seconds,
-            )
-        except TimeoutError:
-            timed_out = True
-            await terminate_process_tree(process)
-    except asyncio.CancelledError:
-        await asyncio.shield(terminate_process_tree(process))
-        await asyncio.shield(finish_collectors(collector_tasks))
-        raise
+        while process.poll() is None:
+            if cancel_requested.is_set():
+                cancelled = True
+                terminate_process_tree(process)
+                break
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                terminate_process_tree(process)
+                break
+
+            cancel_requested.wait(timeout=min(0.05, remaining))
     finally:
-        await finish_collectors(collector_tasks)
+        if process.poll() is None:
+            terminate_process_tree(process)
+        finish_collectors(collector_threads, streams)
+
+    if cancelled:
+        raise _ShellRunCancelled()
 
     duration_ms = round((time.monotonic() - started) * 1000)
     return ShellRunResult(
@@ -504,3 +438,37 @@ async def run_shell(
         stdout=stdout_collector.result(),
         stderr=stderr_collector.result(),
     )
+
+
+async def run_shell(
+    *,
+    command: str,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    max_spill_bytes: int = DEFAULT_MAX_SPILL_BYTES,
+) -> ShellRunResult:
+    cancel_requested = threading.Event()
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            _run_shell_sync,
+            command=command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            max_spill_bytes=max_spill_bytes,
+            cancel_requested=cancel_requested,
+        )
+    )
+
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancel_requested.set()
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        raise

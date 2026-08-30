@@ -213,12 +213,6 @@ def call(_profile_name: str = DEFAULT_VISION_PROFILE,**kwargs) -> dict:
             "extra_body": extra_body,
         }
         
-        save_response_json(
-            response, 
-            input_data.question, 
-            safe_request_data,
-            filename="imageread_response.json")
-        
         answer = response.choices[0].message.content or ""
 
 
@@ -292,12 +286,6 @@ async def acall(_profile_name: str = DEFAULT_VISION_PROFILE,**kwargs) -> dict:
             "extra_body": extra_body,
         }
 
-        save_response_json(
-            response, 
-            input_data.question, 
-            safe_request_data,
-            filename="imageread_response.json")
-        
         answer = response.choices[0].message.content or ""
 
 

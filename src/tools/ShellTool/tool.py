@@ -20,7 +20,7 @@ TOOL_DIR = Path(__file__).resolve().parent
 IS_READ_ONLY = False
 IS_DESTRUCTIVE = True
 
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 120
 MAX_TIMEOUT = 600
 
 

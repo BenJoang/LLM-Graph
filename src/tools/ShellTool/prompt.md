@@ -17,9 +17,16 @@
 
 - `command`：要执行的完整命令。Windows 使用 PowerShell，其他平台使用 Bash/Sh。
 - `cwd`：可选工作目录；相对路径基于 agent 工作目录解析，不填时使用 agent 工作目录。
-- `timeout`：超时时间（秒），默认 30，最大 600。
+- `timeout`：超时时间（秒），默认 120，最大 600。
 
 每次调用都在新的非交互式 Shell 中执行。变量、函数和 `cd` 状态不会在调用之间保留；需要指定目录时优先使用 `cwd`。
+
+Windows 命令必须使用 PowerShell 语法：
+
+- 不要使用 `&&` 或 `||`。
+- 后一条命令依赖前一条成功时，使用 `cmd1; if ($?) { cmd2 }`。
+- 无论前一条是否成功都要继续时，使用 `cmd1; cmd2`。
+- 优先使用完整的 PowerShell cmdlet 名称，不要按 Bash 习惯编写命令。
 
 ### PERMISSIONS
 
