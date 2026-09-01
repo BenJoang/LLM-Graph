@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Starter Example"
+  short_description: "Reference structure for building a script-backed Codex skill"
+  default_prompt: "Use $skill-starter-example to summarize a local JSON item list."

@@ -8,14 +8,29 @@
 
 ## 环境安装
 
-项目使用 Python 3.12。首次使用时，需要在项目根目录自行创建虚拟环境并安装依赖。
-下面以 Conda 为例：
+项目使用 Python 3.12，并把 Python 虚拟环境固定在项目根目录的 `.venv` 中，不需要
+安装 Conda。首次使用前请先安装：
+
+- Python 3.12，建议从 python.org 安装并启用 Windows Python Launcher（`py.exe`）
+- Node.js LTS（包含 npm）
+
+然后在项目根目录运行一键安装脚本：
 
 ```powershell
-conda create -n LLMv1 python=3.12 -y
-conda activate LLMv1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-LLMv1.txt
+.\setup.ps1
+```
+
+也可以双击 `setup.bat`。安装脚本会创建 `.venv`、安装
+`requirements-LLMv1.txt` 中的 Python 依赖，并安装 `desktop` 的 npm 依赖。
+`.venv` 是本机生成目录，不应提交到 Git；删除后重新运行安装脚本即可恢复。
+
+如需手动安装，等价命令为：
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-LLMv1.txt
+npm install --prefix desktop
 ```
 
 复制环境变量示例文件：
@@ -44,11 +59,10 @@ Copy-Item .env.example .env
 `tool_agent_graph` 是带工具调用能力的 agent graph。项目根目录提供了
 `tool_agent_chat.py`，可以直接在终端中进行多轮对话，不再需要临时创建 test 脚本。
 
-完成上面的环境安装和模型配置后，激活虚拟环境并启动对话：
+完成上面的环境安装和模型配置后，使用项目虚拟环境启动对话：
 
 ```powershell
-conda activate LLMv1
-python tool_agent_chat.py
+.\.venv\Scripts\python.exe tool_agent_chat.py
 ```
 
 脚本会为每次新对话生成一个 `thread_id`。默认情况下，对话 checkpoint 保存在
@@ -56,13 +70,13 @@ python tool_agent_chat.py
 ID，即可继续原来的对话：
 
 ```powershell
-python tool_agent_chat.py --thread-id cli-20260817-120000-abcd1234
+.\.venv\Scripts\python.exe tool_agent_chat.py --thread-id cli-20260817-120000-abcd1234
 ```
 
 也可以选择模型和 Agent 工作目录：
 
 ```powershell
-python tool_agent_chat.py `
+.\.venv\Scripts\python.exe tool_agent_chat.py `
   --profile deepseekv4-flash `
   --vision-profile qwen3-vl `
   --working-dir "E:\Code Program\LLM-Graph"
@@ -79,7 +93,7 @@ python tool_agent_chat.py `
 查看所有启动参数：
 
 ```powershell
-python tool_agent_chat.py --help
+.\.venv\Scripts\python.exe tool_agent_chat.py --help
 ```
 
 ### Checkpoint 存储后端
@@ -104,7 +118,7 @@ LangGraph checkpoint 数据表的初始化和升级。如果只使用命令行�
 可以手动执行一次：
 
 ```powershell
-python -c "import asyncio; from src.persistence.checkpoints import setup_checkpoint_backend; asyncio.run(setup_checkpoint_backend())"
+.\.venv\Scripts\python.exe -c "import asyncio; from src.persistence.checkpoints import setup_checkpoint_backend; asyncio.run(setup_checkpoint_backend())"
 ```
 
 SQLite 和 PostgreSQL 中的旧会话不会自动互相迁移。切换后端后，只有目标后端中已经存在
@@ -112,26 +126,28 @@ SQLite 和 PostgreSQL 中的旧会话不会自动互相迁移。切换后端后�
 
 ## Windows GUI 工作台
 
-项目提供 Electron + React 桌面开发版。它会自动通过 `conda run -n LLMv1`
-启动本地 FastAPI，并使用随机端口和临时访问令牌连接后端。
+项目提供 Electron + React 桌面开发版。它会自动使用项目内
+`.venv\Scripts\python.exe` 启动本地 FastAPI，并使用随机端口和临时访问令牌连接后端。
 
-首次启动和后续启动都可以运行：
+首次使用先执行一次安装，后续直接启动：
 
 ```powershell
+.\setup.ps1
 .\start_gui.ps1
 ```
 
-也可以手动安装和启动前端：
+也可以分别双击 `setup.bat` 和 `start_gui.bat`。
+
+完成安装后，也可以直接启动前端开发服务器；Electron 会自动寻找项目内 `.venv`：
 
 ```powershell
-npm install --prefix desktop
 npm run dev --prefix desktop
 ```
 
-如果 `conda` 不在 PATH 中，可显式指定 Python：
+如需临时使用另一个 Python 3.12 虚拟环境，可以显式覆盖解释器；普通使用不需要设置：
 
 ```powershell
-$env:LLM_GRAPH_PYTHON = "E:\Software\Anaconda3\envs\LLMv1\python.exe"
+$env:LLM_GRAPH_PYTHON = "E:\other-project\.venv\Scripts\python.exe"
 .\start_gui.ps1
 ```
 
@@ -140,6 +156,18 @@ checkpoint 默认保存在 `outputs/checkpoints/tool_agent.sqlite`；当
 `LLM_GRAPH_CHECKPOINT_BACKEND=postgres` 时，消息和 graph state 改为保存在配置的
 PostgreSQL 数据库中。模型地址、数据库连接和密钥继续由 `.env` 与
 `config/user_config.json` 管理，不会写入浏览器存储。
+
+每个空会话都可以在页头填写自己的 Graph 入口，格式为
+`src.graphs.<模块>:<异步函数>`。入口必须是异步生成器，并接受 GUI 通用参数
+`question`、`thread_id`、`profile_name`、`vision_profile_name`、
+`recursion_limit`、`working_dir` 和 `context_window_tokens`；输出结构与
+`tool_agent_graph.astream_tool_agent` 一致。最简单的扩展方式是复制
+`src/graphs/tool_agent_graph.py` 后修改工作流，同时保留对应的流式入口函数。
+已有消息的会话会锁定 Graph，避免不同状态结构共用同一个 checkpoint。
+
+不同 GUI 会话可以同时运行，但同一个会话一次只允许一个任务。关闭 GUI 会取消仍在
+运行的任务。永久删除会同时清除会话元数据与当前 checkpoint 后端中的完整 thread，
+且不可恢复。
 
 ## 开发计划
 

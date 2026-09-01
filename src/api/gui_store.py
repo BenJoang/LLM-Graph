@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
+from src.api.graph_entrypoints import DEFAULT_GRAPH_ENTRYPOINT
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "outputs" / "gui_state.sqlite"
@@ -29,6 +31,7 @@ class SessionRecord:
     working_dir: str
     context_window_tokens: int
     recursion_limit: int
+    graph_entrypoint: str
     created_at: str
     updated_at: str
     archived: bool
@@ -67,12 +70,26 @@ class GuiStore:
                     working_dir TEXT NOT NULL,
                     context_window_tokens INTEGER NOT NULL,
                     recursion_limit INTEGER NOT NULL,
+                    graph_entrypoint TEXT NOT NULL DEFAULT
+                        'src.graphs.tool_agent_graph:astream_tool_agent',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     archived INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(gui_sessions)"
+                ).fetchall()
+            }
+            if "graph_entrypoint" not in columns:
+                connection.execute(
+                    "ALTER TABLE gui_sessions ADD COLUMN graph_entrypoint "
+                    "TEXT NOT NULL DEFAULT "
+                    "'src.graphs.tool_agent_graph:astream_tool_agent'"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_gui_sessions_updated "
                 "ON gui_sessions(archived, updated_at DESC)"
@@ -92,6 +109,7 @@ class GuiStore:
         working_dir: str,
         context_window_tokens: int,
         recursion_limit: int,
+        graph_entrypoint: str = DEFAULT_GRAPH_ENTRYPOINT,
         title: str = "新会话",
     ) -> SessionRecord:
         now = utc_now()
@@ -103,6 +121,7 @@ class GuiStore:
             working_dir=working_dir,
             context_window_tokens=context_window_tokens,
             recursion_limit=recursion_limit,
+            graph_entrypoint=graph_entrypoint,
             created_at=now,
             updated_at=now,
             archived=False,
@@ -113,8 +132,8 @@ class GuiStore:
                 INSERT INTO gui_sessions (
                     id, title, profile_name, vision_profile_name, working_dir,
                     context_window_tokens, recursion_limit, created_at,
-                    updated_at, archived
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    updated_at, archived, graph_entrypoint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -127,6 +146,7 @@ class GuiStore:
                     record.created_at,
                     record.updated_at,
                     int(record.archived),
+                    record.graph_entrypoint,
                 ),
             )
         return record
@@ -156,6 +176,7 @@ class GuiStore:
             "working_dir",
             "context_window_tokens",
             "recursion_limit",
+            "graph_entrypoint",
             "archived",
         }
         values = {key: value for key, value in patch.items() if key in allowed}
@@ -174,6 +195,14 @@ class GuiStore:
             if cursor.rowcount == 0:
                 return None
         return self.get_session(session_id)
+
+    def delete_session(self, session_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM gui_sessions WHERE id = ?",
+                (session_id,),
+            )
+        return cursor.rowcount > 0
 
     def touch_with_question(self, session_id: str, question: str) -> SessionRecord | None:
         record = self.get_session(session_id)

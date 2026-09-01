@@ -96,7 +96,7 @@ def format_available_skills(
     for skill in selected_skills:
         lines.extend(
             [
-                f"- {skill.name} :{skill.description}",
+                f"- {skill.name} :{skill.description}\n  路径：{skill.path}",
             ]
         )
 
@@ -109,7 +109,7 @@ def build_skill_system_message(
         skill_names: list[str] | None = None,
         include_all_skills: bool = False,
     ) -> str:
-    return f"""当任务匹配某个 Skill 描述时，先调用 skill 工具加载该 Skill 的完整说明。skill完整说明都是文件夹里面的skill.md。
+    return f"""当任务匹配某个 Skill 描述时，先调用 read_file 工具加载该 Skill 的完整说明。skill完整说明都是文件夹里面的skill.md。
 不要猜测 Skill 内容。没有在下面列出来的skill都是不能使用的skill, 只能使用下面列出来的skill。
 {format_available_skills(skills_dir, skill_names=skill_names, include_all_skills=include_all_skills)}
 """

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Degoog Search"
+  short_description: "Search the web through the local Degoog instance"
+  default_prompt: "Use $degoog-search to search the web and answer with source links."

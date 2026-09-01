@@ -1,0 +1,5 @@
+[
+  {"name": "alpha", "status": "active"},
+  {"name": "beta", "status": "paused"},
+  {"name": "gamma", "status": "active"}
+]

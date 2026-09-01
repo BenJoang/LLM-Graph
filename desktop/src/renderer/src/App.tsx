@@ -21,6 +21,7 @@ import {
   Settings,
   Sparkles,
   Sun,
+  Trash2,
   Wrench,
   X,
 } from 'lucide-react'
@@ -29,11 +30,13 @@ import remarkGfm from 'remark-gfm'
 import {
   cancelRun,
   createSession,
+  deleteSession,
   getProfiles,
   getSession,
   getSessions,
   streamRun,
   updateSession,
+  validateGraphEntrypoint,
 } from './api'
 import type { LiveTimelinePart, Message, Profile, Session, SessionDetail } from './types'
 import {
@@ -51,6 +54,14 @@ import {
   validateSessionLimits,
   type SessionLimits,
 } from './session-config'
+import {
+  idleRunState,
+  messagesWithOptimistic,
+  updateSessionRunState,
+  type SessionRunStates,
+} from './run-state'
+
+const DEFAULT_GRAPH_ENTRYPOINT = 'src.graphs.tool_agent_graph:astream_tool_agent'
 
 interface Defaults {
   profile_name: string
@@ -58,6 +69,7 @@ interface Defaults {
   working_dir: string
   context_window_tokens: number
   recursion_limit: number
+  graph_entrypoint: string
   theme: ThemePreference
 }
 
@@ -345,9 +357,24 @@ function SettingsDialog({
   profiles: Profile[]
   initial: Defaults
   onClose(): void
-  onSave(value: Defaults): void
+  onSave(value: Defaults): Promise<void>
 }) {
   const [value, setValue] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  async function save() {
+    setSaving(true)
+    setValidationError(null)
+    try {
+      await onSave(value)
+    } catch (cause) {
+      setValidationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="settings-dialog" onMouseDown={(event) => event.stopPropagation()}>
@@ -357,6 +384,7 @@ function SettingsDialog({
           <label>主模型<select value={value.profile_name} onChange={(event) => setValue({ ...value, profile_name: event.target.value })}>{profiles.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></label>
           <label>视觉模型<select value={value.vision_profile_name} onChange={(event) => setValue({ ...value, vision_profile_name: event.target.value })}>{profiles.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></label>
           <label className="wide">默认工作目录<div className="directory-field"><input value={value.working_dir} readOnly /><button onClick={async () => { const path = await window.llmGraph.selectDirectory(); if (path) setValue({ ...value, working_dir: path }) }}>选择</button></div></label>
+          <label className="wide">默认 Graph 入口<input value={value.graph_entrypoint} spellCheck={false} onChange={(event) => setValue({ ...value, graph_entrypoint: event.target.value })} /></label>
           <label>上下文窗口<input type="number" min={1024} value={value.context_window_tokens} onChange={(event) => setValue({ ...value, context_window_tokens: Number(event.target.value) })} /></label>
           <label>递归上限<input type="number" min={1} max={1000} value={value.recursion_limit} onChange={(event) => setValue({ ...value, recursion_limit: Number(event.target.value) })} /></label>
           <label className="wide">外观<div className="theme-options">
@@ -366,8 +394,34 @@ function SettingsDialog({
               ['system', '跟随系统', Monitor],
             ] as const).map(([id, label, Icon]) => <button key={id} type="button" className={value.theme === id ? 'active' : ''} onClick={() => setValue({ ...value, theme: id })}><Icon size={15} />{label}</button>)}
           </div></label>
+          {validationError && <p className="settings-error">{validationError}</p>}
         </div>
-        <footer><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" onClick={() => onSave(value)}>保存默认值</button></footer>
+        <footer><button className="secondary-button" disabled={saving} onClick={onClose}>取消</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? '正在验证…' : '保存默认值'}</button></footer>
+      </div>
+    </div>
+  )
+}
+
+function DeleteDialog({
+  session,
+  deleting,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  session: Session
+  deleting: boolean
+  error: string | null
+  onClose(): void
+  onConfirm(): Promise<void>
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={deleting ? undefined : onClose}>
+      <div className="settings-dialog delete-dialog" onMouseDown={(event) => event.stopPropagation()}>
+        <header><div><span className="eyebrow danger">永久删除</span><h2>删除“{session.title}”？</h2></div><button className="icon-button" disabled={deleting} onClick={onClose}><X size={18} /></button></header>
+        <p className="settings-copy">会话配置、全部消息和 Graph checkpoint 都会永久删除，此操作无法恢复。</p>
+        {error && <p className="delete-error">{error}</p>}
+        <footer><button className="secondary-button" disabled={deleting} onClick={onClose}>取消</button><button className="danger-button" disabled={deleting} onClick={() => void onConfirm()}>{deleting ? '正在删除…' : '永久删除'}</button></footer>
       </div>
     </div>
   )
@@ -379,11 +433,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   const [query, setQuery] = useState('')
-  const [draft, setDraft] = useState('')
-  const [running, setRunning] = useState(false)
-  const [stopping, setStopping] = useState(false)
-  const [runId, setRunId] = useState<string | null>(null)
-  const [liveTimeline, setLiveTimeline] = useState<LiveTimelinePart[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [runStates, setRunStates] = useState<SessionRunStates>({})
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -394,6 +445,12 @@ export default function App() {
   const [renameSaving, setRenameSaving] = useState(false)
   const [limitsOpen, setLimitsOpen] = useState(false)
   const [limitsSaving, setLimitsSaving] = useState(false)
+  const [graphDraft, setGraphDraft] = useState('')
+  const [graphSaving, setGraphSaving] = useState(false)
+  const [deleteCandidate, setDeleteCandidate] = useState<Session | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [savedDefaults, setSavedDefaults] = useState<Partial<Defaults>>(() => readDefaults())
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => normalizeThemePreference(readDefaults().theme))
   const [atBottom, setAtBottom] = useState(true)
   const conversationRef = useRef<HTMLDivElement>(null)
@@ -402,25 +459,51 @@ export default function App() {
   const renameSavingRef = useRef(false)
   const limitsSavingRef = useRef(false)
   const followBottomRef = useRef(true)
-  const runAbortRef = useRef<AbortController | null>(null)
-  const liveSequenceRef = useRef(0)
+  const runAbortRef = useRef(new Map<string, AbortController>())
+  const liveSequenceRef = useRef(new Map<string, number>())
+  const selectedIdRef = useRef<string | null>(null)
+  const showArchivedRef = useRef(false)
+  const selectionSequenceRef = useRef(0)
+  const graphSavingRef = useRef(false)
   const booted = useRef(false)
 
   useEffect(() => {
-    return () => runAbortRef.current?.abort()
+    return () => runAbortRef.current.forEach((controller) => controller.abort())
   }, [])
 
   const defaults: Defaults = useMemo(() => {
-    const saved = readDefaults()
+    const saved = savedDefaults
     return {
       profile_name: saved.profile_name || profiles[0]?.name || 'qwen3.8-flash',
       vision_profile_name: saved.vision_profile_name || (profiles.some((item) => item.name === 'qwen3.8') ? 'qwen3.8' : profiles[0]?.name || 'qwen3-vl'),
       working_dir: saved.working_dir || detail?.session.working_dir || '',
       context_window_tokens: saved.context_window_tokens || 65536,
       recursion_limit: saved.recursion_limit || 1000,
+      graph_entrypoint: saved.graph_entrypoint || DEFAULT_GRAPH_ENTRYPOINT,
       theme: themePreference,
     }
-  }, [profiles, detail?.session.working_dir, themePreference])
+  }, [profiles, detail?.session.working_dir, savedDefaults, themePreference])
+
+  const currentRun = selectedId ? runStates[selectedId] || idleRunState() : idleRunState()
+  const running = currentRun.status !== 'idle'
+  const stopping = currentRun.status === 'stopping'
+  const draft = selectedId ? drafts[selectedId] || '' : ''
+  const liveTimeline = currentRun.liveTimeline
+  const currentError = currentRun.error || error
+  const displayMessages = detail
+    ? messagesWithOptimistic(detail.messages, currentRun.optimisticMessage)
+    : []
+  const graphLocked = Boolean(detail && (detail.messages.length > 0 || running))
+
+  function setCurrentDraft(value: string) {
+    if (!selectedId) return
+    setDrafts((items) => ({ ...items, [selectedId]: value }))
+  }
+
+  function isSessionRunning(sessionId: string) {
+    const status = runStates[sessionId]?.status
+    return status === 'running' || status === 'stopping'
+  }
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -452,28 +535,43 @@ export default function App() {
     setLimitsOpen(false)
     setEditingSessionId(null)
     setRenameLocation(null)
+    setGraphDraft(detail?.session.id === selectedId ? detail.session.graph_entrypoint : '')
   }, [selectedId])
 
-  async function refreshSessions(preferredId?: string) {
-    const items = await getSessions()
+  useEffect(() => {
+    if (detail?.session.id === selectedId) {
+      setGraphDraft(detail.session.graph_entrypoint)
+    }
+  }, [detail?.session.id, detail?.session.graph_entrypoint, selectedId])
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
+
+  useEffect(() => {
+    showArchivedRef.current = showArchived
+  }, [showArchived])
+
+  async function refreshCompletedSession(sessionId: string) {
+    const [items, updatedDetail] = await Promise.all([
+      getSessions(showArchivedRef.current),
+      getSession(sessionId),
+    ])
     setSessions(items)
-    const nextId = preferredId || selectedId || items[0]?.id || null
-    setSelectedId(nextId)
-    if (nextId) setDetail(await getSession(nextId))
+    if (selectedIdRef.current === sessionId) setDetail(updatedDetail)
   }
 
   async function addSession() {
-    if (running) return
     const session = await createSession(defaults)
-    liveSequenceRef.current = 0
-    setLiveTimeline([])
     setShowArchived(false)
+    showArchivedRef.current = false
     setSessions((items) => [session, ...items])
+    selectedIdRef.current = session.id
     setSelectedId(session.id)
     setDetail({ session, messages: [] })
     followBottomRef.current = true
     setAtBottom(true)
-    setDraft('')
+    setDrafts((items) => ({ ...items, [session.id]: '' }))
   }
 
   useEffect(() => {
@@ -492,11 +590,13 @@ export default function App() {
             vision_profile_name: saved.vision_profile_name || (loadedProfiles.some((item) => item.name === 'qwen3.8') ? 'qwen3.8' : loadedProfiles[0]?.name),
           })
           setSessions([session])
+          selectedIdRef.current = session.id
           setSelectedId(session.id)
           setDetail({ session, messages: [] })
           return
         }
         setSessions(loadedSessions)
+        selectedIdRef.current = loadedSessions[0].id
         setSelectedId(loadedSessions[0].id)
         setDetail(await getSession(loadedSessions[0].id))
       } catch (cause) {
@@ -514,7 +614,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [defaults, running])
+  }, [defaults])
 
   function scrollToBottom() {
     const element = conversationRef.current
@@ -561,14 +661,18 @@ export default function App() {
   })).filter((group) => group.items.length)
 
   async function selectSession(id: string) {
-    if (running || id === selectedId) return
+    if (id === selectedIdRef.current) return
+    const sequence = ++selectionSequenceRef.current
+    selectedIdRef.current = id
     setSelectedId(id)
+    setDetail(null)
     setError(null)
-    liveSequenceRef.current = 0
-    setLiveTimeline([])
     followBottomRef.current = true
     setAtBottom(true)
-    setDetail(await getSession(id))
+    const loaded = await getSession(id)
+    if (sequence === selectionSequenceRef.current && selectedIdRef.current === id) {
+      setDetail(loaded)
+    }
   }
 
   async function patchCurrent(patch: Partial<Session>) {
@@ -581,88 +685,104 @@ export default function App() {
 
   async function submit() {
     if (!detail || running || limitsSavingRef.current || !draft.trim()) return
+    const sessionId = detail.session.id
     const question = draft.trim()
-    setDraft('')
+    setDrafts((items) => ({ ...items, [sessionId]: '' }))
     setError(null)
-    setRunning(true)
-    setStopping(false)
-    setRunId(null)
-    liveSequenceRef.current = 0
-    setLiveTimeline([])
+    setRunStates((states) => updateSessionRunState(states, sessionId, () => ({
+      status: 'running',
+      runId: null,
+      liveTimeline: [],
+      optimisticMessage: {
+        id: `optimistic-${Date.now()}`,
+        role: 'user',
+        content: question,
+        tool_calls: [],
+      },
+      error: null,
+    })))
+    liveSequenceRef.current.set(sessionId, 0)
     setLimitsOpen(false)
     followBottomRef.current = true
     setAtBottom(true)
-    setDetail({
-      ...detail,
-      messages: [...detail.messages, { id: `optimistic-${Date.now()}`, role: 'user', content: question, tool_calls: [] }],
-    })
     const abortController = new AbortController()
-    runAbortRef.current = abortController
+    runAbortRef.current.set(sessionId, abortController)
     try {
-      await streamRun(detail.session.id, question, ({ type, data }) => {
-        if (type === 'run.started') setRunId(String(data.run_id))
+      await streamRun(sessionId, question, ({ type, data }) => {
+        if (type === 'run.started') {
+          setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, runId: String(data.run_id) })))
+        }
         if (type === 'assistant.step') {
           const message = data.message as unknown as Message
-          liveSequenceRef.current += 1
-          setLiveTimeline((parts) => reduceLiveTimeline(parts, {
-            type: 'assistant.step',
-            key: `step-${liveSequenceRef.current}`,
-            content: message.content || '',
-          }))
+          const sequence = (liveSequenceRef.current.get(sessionId) || 0) + 1
+          liveSequenceRef.current.set(sessionId, sequence)
+          setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, liveTimeline: reduceLiveTimeline(state.liveTimeline, {
+            type: 'assistant.step', key: `step-${sequence}`, content: message.content || '',
+          }) })))
         }
         if (type === 'tool.started') {
-          liveSequenceRef.current += 1
-          setLiveTimeline((parts) => reduceLiveTimeline(parts, {
-            type: 'tool.started',
-            key: `tool-${liveSequenceRef.current}`,
+          const sequence = (liveSequenceRef.current.get(sessionId) || 0) + 1
+          liveSequenceRef.current.set(sessionId, sequence)
+          setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, liveTimeline: reduceLiveTimeline(state.liveTimeline, {
+            type: 'tool.started', key: `tool-${sequence}`,
             callId: String(data.call_id || ''),
             name: String(data.name || 'tool'),
             args: (data.args || {}) as Record<string, unknown>,
-          }))
+          }) })))
         }
         if (type === 'tool.finished') {
-          liveSequenceRef.current += 1
-          setLiveTimeline((parts) => reduceLiveTimeline(parts, {
-            type: 'tool.finished',
-            key: `tool-result-${liveSequenceRef.current}`,
+          const sequence = (liveSequenceRef.current.get(sessionId) || 0) + 1
+          liveSequenceRef.current.set(sessionId, sequence)
+          setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, liveTimeline: reduceLiveTimeline(state.liveTimeline, {
+            type: 'tool.finished', key: `tool-result-${sequence}`,
             callId: String(data.call_id || ''),
             name: String(data.name || 'tool'),
             content: String(data.content || ''),
             status: String(data.status || 'success'),
             duration: typeof data.duration_seconds === 'number' ? data.duration_seconds : null,
-          }))
+          }) })))
         }
-        if (type === 'run.error') setError(String(data.error))
-        if (type === 'run.timed_out') setError(`运行超时（${String(data.timeout_seconds || '?')} 秒）`)
+        if (type === 'run.error') {
+          setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, error: String(data.error) })))
+        }
+        if (type === 'run.timed_out') {
+          setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, error: `运行超时（${String(data.timeout_seconds || '?')} 秒）` })))
+        }
       }, {
         signal: abortController.signal,
-        onRunId: setRunId,
+        onRunId: (value) => setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, runId: value }))),
       })
-      await refreshSessions(detail.session.id)
     } catch (cause) {
       if (!isAbortError(cause)) {
-        setError(cause instanceof Error ? cause.message : String(cause))
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, error: message })))
       }
-      setDetail(await getSession(detail.session.id))
     } finally {
-      if (runAbortRef.current === abortController) runAbortRef.current = null
-      setRunning(false)
-      setStopping(false)
-      setRunId(null)
-      liveSequenceRef.current = 0
-      setLiveTimeline([])
+      if (runAbortRef.current.get(sessionId) === abortController) runAbortRef.current.delete(sessionId)
+      liveSequenceRef.current.delete(sessionId)
+      try {
+        await refreshCompletedSession(sessionId)
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, error: state.error || message })))
+      }
+      setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({
+        ...idleRunState(state.error),
+      })))
     }
   }
 
   async function stop() {
-    if (!runId || stopping) return
-    setStopping(true)
+    if (!selectedId || !currentRun.runId || stopping) return
+    const sessionId = selectedId
+    setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, status: 'stopping' })))
     try {
-      await cancelRun(runId)
+      await cancelRun(currentRun.runId)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setRunStates((states) => updateSessionRunState(states, sessionId, (state) => ({ ...state, error: message })))
     } finally {
-      runAbortRef.current?.abort()
+      runAbortRef.current.get(sessionId)?.abort()
     }
   }
 
@@ -715,37 +835,114 @@ export default function App() {
     }
   }
 
+  async function commitGraphEntrypoint() {
+    if (!detail || graphSavingRef.current) return
+    const sessionId = detail.session.id
+    const entrypoint = graphDraft.trim()
+    if (!entrypoint || entrypoint === detail.session.graph_entrypoint) {
+      setGraphDraft(detail.session.graph_entrypoint)
+      return
+    }
+    graphSavingRef.current = true
+    setGraphSaving(true)
+    try {
+      const updated = await updateSession(sessionId, { graph_entrypoint: entrypoint })
+      setSessions((items) => items.map((item) => item.id === sessionId ? updated : item))
+      setDetail((current) => current?.session.id === sessionId ? { ...current, session: updated } : current)
+      setGraphDraft(updated.graph_entrypoint)
+      setError(null)
+    } catch (cause) {
+      setGraphDraft(detail.session.graph_entrypoint)
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      graphSavingRef.current = false
+      setGraphSaving(false)
+    }
+  }
+
   async function archive(session: Session) {
     await updateSession(session.id, { archived: !showArchived })
     const remaining = sessions.filter((item) => item.id !== session.id)
     setSessions(remaining)
     if (selectedId === session.id) {
       const next = remaining[0]
-      setSelectedId(next?.id || null)
-      setDetail(next ? await getSession(next.id) : null)
+      if (next) {
+        await selectSession(next.id)
+      } else {
+        selectionSequenceRef.current += 1
+        selectedIdRef.current = null
+        setSelectedId(null)
+        setDetail(null)
+      }
     }
   }
 
   async function toggleArchived() {
-    if (running) return
     const nextMode = !showArchived
     const items = await getSessions(nextMode)
+    showArchivedRef.current = nextMode
     setShowArchived(nextMode)
     setSessions(items)
-    setSelectedId(items[0]?.id || null)
-    setDetail(items[0] ? await getSession(items[0].id) : null)
+    if (items[0]) {
+      await selectSession(items[0].id)
+    } else {
+      selectionSequenceRef.current += 1
+      selectedIdRef.current = null
+      setSelectedId(null)
+      setDetail(null)
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteCandidate || deleting) return
+    const sessionId = deleteCandidate.id
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteSession(sessionId)
+      const remaining = sessions.filter((item) => item.id !== sessionId)
+      setSessions(remaining)
+      setRunStates((states) => {
+        const next = { ...states }
+        delete next[sessionId]
+        return next
+      })
+      setDrafts((items) => {
+        const next = { ...items }
+        delete next[sessionId]
+        return next
+      })
+      if (selectedIdRef.current === sessionId) {
+        const next = remaining[0] || null
+        if (next) {
+          await selectSession(next.id)
+        } else {
+          selectionSequenceRef.current += 1
+          selectedIdRef.current = null
+          setSelectedId(null)
+          setDetail(null)
+        }
+      }
+      setDeleteCandidate(null)
+      setDeleteError(null)
+      setError(null)
+    } catch (cause) {
+      setDeleteError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
     <div className="app-shell">
       {sidebarOpen && <aside className="sidebar">
         <div className="brand"><span className="brand-mark"><Bot size={18} /></span><div><strong>LLM-Graph</strong><small>Local agent workspace</small></div><button className="icon-button" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={17} /></button></div>
-        <button className="new-session" disabled={running} onClick={() => void addSession()}><MessageSquarePlus size={17} />新建会话<span>Ctrl N</span></button>
+        <button className="new-session" onClick={() => void addSession()}><MessageSquarePlus size={17} />新建会话<span>Ctrl N</span></button>
         <div className="search-box"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索会话" /></div>
         <div className="session-list">
           {grouped.map((group) => <section key={group.label}><label>{group.label}</label>{group.items.map((session) => (
             <div key={session.id} role="button" tabIndex={0} className={`session-row ${selectedId === session.id ? 'active' : ''}`} onClick={() => void selectSession(session.id)} onKeyDown={(event) => { if (event.key === 'Enter') void selectSession(session.id) }}>
-              <span className="session-dot" />
+              <span className={`session-dot ${isSessionRunning(session.id) ? 'running' : ''}`} />
               <span className="session-text">
                 {editingSessionId === session.id && renameLocation === 'sidebar' ? (
                   <RenameInput className="sidebar-title-input" value={renameDraft} saving={renameSaving} onChange={setRenameDraft} onCommit={() => void commitRename(session)} onCancel={cancelRename} />
@@ -754,7 +951,8 @@ export default function App() {
               </span>
               <span className="session-actions">
                 <button title="重命名" onClick={(event) => { event.stopPropagation(); beginRename(session, 'sidebar') }}><Pencil size={13} /></button>
-                <button title={showArchived ? '恢复' : '归档'} onClick={(event) => { event.stopPropagation(); void archive(session) }}>{showArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
+                <button disabled={isSessionRunning(session.id)} title={isSessionRunning(session.id) ? '请先停止任务' : showArchived ? '恢复' : '归档'} onClick={(event) => { event.stopPropagation(); void archive(session) }}>{showArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
+                <button className="delete-action" disabled={isSessionRunning(session.id)} title={isSessionRunning(session.id) ? '请先停止任务' : '永久删除'} onClick={(event) => { event.stopPropagation(); setDeleteError(null); setDeleteCandidate(session) }}><Trash2 size={13} /></button>
               </span>
             </div>
           ))}</section>)}
@@ -771,21 +969,22 @@ export default function App() {
                 <RenameInput className="header-title-input" value={renameDraft} saving={renameSaving} onChange={setRenameDraft} onCommit={() => void commitRename(detail.session)} onCancel={cancelRename} />
               ) : <h1 title="双击重命名" onDoubleClick={() => beginRename(detail.session, 'header')}>{detail.session.title}</h1>}
               <span className={`run-badge ${running ? 'active' : ''}`}>{running ? stopping ? '正在停止' : '运行中' : '就绪'}</span>
-            </div><button className="path-button" disabled={running} onClick={async () => { const path = await window.llmGraph.selectDirectory(); if (path) await patchCurrent({ working_dir: path }) }}><Folder size={13} />{detail.session.working_dir}</button></div>
+            </div><button className="path-button" disabled={running} onClick={async () => { const path = await window.llmGraph.selectDirectory(); if (path) await patchCurrent({ working_dir: path }) }}><Folder size={13} />{detail.session.working_dir}</button><label className="graph-entrypoint"><span>Graph</span><input value={graphDraft} disabled={graphLocked || graphSaving} spellCheck={false} title={graphLocked ? running ? '运行中不能更换 Graph' : '已有消息的会话不能更换 Graph' : '格式：src.graphs.<模块>:<异步函数>'} onChange={(event) => setGraphDraft(event.target.value)} onBlur={() => void commitGraphEntrypoint()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void commitGraphEntrypoint() } if (event.key === 'Escape') setGraphDraft(detail.session.graph_entrypoint) }} /></label></div>
             <div className="header-controls"><select value={detail.session.profile_name} disabled={running} onChange={(event) => void patchCurrent({ profile_name: event.target.value })}>{profiles.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select><select value={detail.session.vision_profile_name} disabled={running} onChange={(event) => void patchCurrent({ vision_profile_name: event.target.value })}>{profiles.map((profile) => <option key={profile.name}>{profile.name}</option>)}</select></div>
           </header>
           <div className="conversation" ref={conversationRef} onScroll={handleConversationScroll}>
             <div className="conversation-inner" ref={conversationInnerRef}>
-              {detail.messages.length === 0 && <div className="empty-state"><span><Sparkles size={23} /></span><h2>开始一个新的工作流</h2><p>描述你希望 Agent 完成的任务。工具调用和执行结果会按步骤显示在这里。</p></div>}
-              <MessageTimeline messages={detail.messages} running={running} stopping={stopping} liveTimeline={liveTimeline} />
-              {error && <div className="error-banner"><strong>操作未完成</strong><span>{error}</span><button onClick={() => setError(null)}><X size={15} /></button></div>}
+              {displayMessages.length === 0 && <div className="empty-state"><span><Sparkles size={23} /></span><h2>开始一个新的工作流</h2><p>描述你希望 Agent 完成的任务。工具调用和执行结果会按步骤显示在这里。</p></div>}
+              <MessageTimeline messages={displayMessages} running={running} stopping={stopping} liveTimeline={liveTimeline} />
+              {currentError && <div className="error-banner"><strong>操作未完成</strong><span>{currentError}</span><button onClick={() => { setError(null); if (selectedId) setRunStates((states) => updateSessionRunState(states, selectedId, (state) => ({ ...state, error: null }))) }}><X size={15} /></button></div>}
             </div>
           </div>
           {!atBottom && <button className="to-bottom-button" type="button" aria-label="回到底部" onClick={scrollToBottom}><ArrowDown size={16} /></button>}
-          <div className="composer-wrap"><div className="composer"><textarea value={draft} disabled={running} placeholder="告诉 LLM-Graph 你想完成什么…" rows={1} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} /><div className="composer-footer"><div className="composer-meta"><span><span className="status-dot" />{detail.session.profile_name}</span><div className="limits-control" ref={limitsMenuRef}><button className={`limits-trigger ${limitsOpen ? 'active' : ''}`} type="button" disabled={running} aria-expanded={limitsOpen} onClick={() => setLimitsOpen((value) => !value)}><Gauge size={12} />{formatContextLimit(detail.session.context_window_tokens)} ctx<ChevronDown size={11} /></button>{limitsOpen && <SessionLimitsMenu key={`${detail.session.id}-${detail.session.context_window_tokens}-${detail.session.recursion_limit}`} session={detail.session} saving={limitsSaving} onSave={saveSessionLimits} />}</div></div>{running ? <button className="stop-button" disabled={!runId || stopping} onClick={() => void stop()}><CircleStop size={16} />{stopping ? '正在停止' : '停止'}</button> : <button className="send-button" disabled={!draft.trim() || limitsSaving} onClick={() => void submit()}><Send size={16} />发送</button>}</div></div><p className="composer-hint">Enter 发送 · Shift Enter 换行 · 工具会在当前工作目录中运行</p></div>
+          <div className="composer-wrap"><div className="composer"><textarea value={draft} disabled={running} placeholder="告诉 LLM-Graph 你想完成什么…" rows={1} onChange={(event) => setCurrentDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} /><div className="composer-footer"><div className="composer-meta"><span><span className="status-dot" />{detail.session.profile_name}</span><div className="limits-control" ref={limitsMenuRef}><button className={`limits-trigger ${limitsOpen ? 'active' : ''}`} type="button" disabled={running} aria-expanded={limitsOpen} onClick={() => setLimitsOpen((value) => !value)}><Gauge size={12} />{formatContextLimit(detail.session.context_window_tokens)} ctx<ChevronDown size={11} /></button>{limitsOpen && <SessionLimitsMenu key={`${detail.session.id}-${detail.session.context_window_tokens}-${detail.session.recursion_limit}`} session={detail.session} saving={limitsSaving} onSave={saveSessionLimits} />}</div></div>{running ? <button className="stop-button" disabled={!currentRun.runId || stopping} onClick={() => void stop()}><CircleStop size={16} />{stopping ? '正在停止' : '停止'}</button> : <button className="send-button" disabled={!draft.trim() || limitsSaving} onClick={() => void submit()}><Send size={16} />发送</button>}</div></div><p className="composer-hint">Enter 发送 · Shift Enter 换行 · 工具会在当前工作目录中运行</p></div>
         </> : <div className="empty-workspace"><Bot size={28} /><p>创建一个会话开始使用</p><button className="primary-button" onClick={() => void addSession()}>新建会话</button></div>}
       </main>
-      {settingsOpen && <SettingsDialog profiles={profiles} initial={defaults} onClose={() => setSettingsOpen(false)} onSave={(value) => { localStorage.setItem(DEFAULTS_KEY, JSON.stringify(value)); setThemePreference(value.theme); setSettingsOpen(false) }} />}
+      {settingsOpen && <SettingsDialog profiles={profiles} initial={defaults} onClose={() => setSettingsOpen(false)} onSave={async (value) => { const graphEntrypoint = await validateGraphEntrypoint(value.graph_entrypoint); const normalized = { ...value, graph_entrypoint: graphEntrypoint }; localStorage.setItem(DEFAULTS_KEY, JSON.stringify(normalized)); setSavedDefaults(normalized); setThemePreference(value.theme); setSettingsOpen(false) }} />}
+      {deleteCandidate && <DeleteDialog session={deleteCandidate} deleting={deleting} error={deleteError} onClose={() => { if (!deleting) { setDeleteCandidate(null); setDeleteError(null) } }} onConfirm={confirmDelete} />}
     </div>
   )
 }

@@ -4,12 +4,13 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from importlib import import_module
 from typing import Any
 from uuid import uuid4
 
 from src.api.gui_messages import message_to_dto
+from src.api.graph_entrypoints import resolve_graph_entrypoint
 from src.api.gui_store import GuiStore, SessionRecord
 
 
@@ -20,27 +21,19 @@ class RunConflictError(RuntimeError):
     pass
 
 
-class AsyncBackendNotReadyError(RuntimeError):
+class SessionNotFoundError(RuntimeError):
     pass
 
 
 AgentStreamFactory = Callable[..., AsyncIterator[dict]]
 
 
-def _load_agent_stream() -> AgentStreamFactory:
-    """Resolve the async graph entrypoint without breaking API startup."""
-    module = import_module("src.graphs.tool_agent_graph")
-    stream_agent = getattr(module, "astream_tool_agent", None)
-    if stream_agent is None:
-        raise AsyncBackendNotReadyError(
-            "异步 Agent 后端尚未就绪：请在 "
-            "src.graphs.tool_agent_graph 中实现 astream_tool_agent"
-        )
-    return stream_agent
-
-
-async def _default_agent_stream(**kwargs) -> AsyncIterator[dict]:
-    stream_agent = _load_agent_stream()
+async def _default_agent_stream(
+    *,
+    graph_entrypoint: str,
+    **kwargs,
+) -> AsyncIterator[dict]:
+    stream_agent = resolve_graph_entrypoint(graph_entrypoint)
     async for update in stream_agent(**kwargs):
         yield update
 
@@ -82,20 +75,29 @@ class RunManager:
         run_timeout_seconds: float | None = RUN_TIMEOUT_SECONDS,
     ) -> None:
         self.store = store
-        self._stream_agent = stream_agent or _default_agent_stream
+        self._stream_agent = stream_agent
         self._run_timeout_seconds = run_timeout_seconds
         self._lock = asyncio.Lock()
-        self._active: RunHandle | None = None
+        self._active: dict[str, RunHandle] = {}
+        self._mutating: set[str] = set()
         self._runs: dict[str, RunHandle] = {}
 
     async def start(
         self,
-        session: SessionRecord,
+        session_id: str,
         question: str,
     ) -> RunHandle:
         async with self._lock:
-            if self._active is not None and not self._active.finished_event.is_set():
-                raise RunConflictError("已有 Agent 任务正在运行")
+            if session_id in self._mutating:
+                raise RunConflictError("会话正在修改，请稍后重试")
+            active = self._active.get(session_id)
+            if active is not None and not active.finished_event.is_set():
+                raise RunConflictError("当前会话已有 Agent 任务正在运行")
+            session = self.store.get_session(session_id)
+            if session is None:
+                raise SessionNotFoundError("会话不存在")
+            if session.archived:
+                raise RunConflictError("归档会话不能运行")
 
             handle = RunHandle(
                 run_id=f"run-{uuid4().hex}",
@@ -109,7 +111,7 @@ class RunManager:
                     "session_id": handle.session_id,
                 },
             )
-            self._active = handle
+            self._active[session.id] = handle
             self._runs[handle.run_id] = handle
             handle.task = asyncio.create_task(
                 self._worker(handle, session, question),
@@ -120,6 +122,30 @@ class RunManager:
             )
 
         return handle
+
+    async def is_session_active(self, session_id: str) -> bool:
+        async with self._lock:
+            handle = self._active.get(session_id)
+            return handle is not None and not handle.finished_event.is_set()
+
+    @asynccontextmanager
+    async def session_mutation(self, session_id: str):
+        """Serialize lifecycle mutations with starts for one session."""
+
+        async with self._lock:
+            active = self._active.get(session_id)
+            if active is not None and not active.finished_event.is_set():
+                raise RunConflictError("运行中的会话不能执行此操作，请先停止任务")
+            if session_id in self._mutating:
+                raise RunConflictError("会话正在修改，请稍后重试")
+            if self.store.get_session(session_id) is None:
+                raise SessionNotFoundError("会话不存在")
+            self._mutating.add(session_id)
+        try:
+            yield
+        finally:
+            async with self._lock:
+                self._mutating.discard(session_id)
 
     async def cancel(
         self,
@@ -182,16 +208,20 @@ class RunManager:
                 session.id,
                 question,
             )
+            stream_agent = self._stream_agent or _default_agent_stream
+            stream_kwargs = {
+                "question": question,
+                "thread_id": session.id,
+                "profile_name": session.profile_name,
+                "vision_profile_name": session.vision_profile_name,
+                "recursion_limit": session.recursion_limit,
+                "working_dir": session.working_dir,
+                "context_window_tokens": session.context_window_tokens,
+            }
+            if self._stream_agent is None:
+                stream_kwargs["graph_entrypoint"] = session.graph_entrypoint
             async with asyncio.timeout(self._run_timeout_seconds):
-                async for update in self._stream_agent(
-                    question=question,
-                    thread_id=session.id,
-                    profile_name=session.profile_name,
-                    vision_profile_name=session.vision_profile_name,
-                    recursion_limit=session.recursion_limit,
-                    working_dir=session.working_dir,
-                    context_window_tokens=session.context_window_tokens,
-                ):
+                async for update in stream_agent(**stream_kwargs):
                     self._emit_update(handle, update, calls)
 
             handle.status = "completed"
@@ -241,8 +271,8 @@ class RunManager:
         finally:
             handle.finish_stream()
             async with self._lock:
-                if self._active is handle:
-                    self._active = None
+                if self._active.get(handle.session_id) is handle:
+                    self._active.pop(handle.session_id, None)
 
     def _ensure_task_finalized(
         self,
@@ -281,8 +311,8 @@ class RunManager:
 
     async def _release_active(self, handle: RunHandle) -> None:
         async with self._lock:
-            if self._active is handle:
-                self._active = None
+            if self._active.get(handle.session_id) is handle:
+                self._active.pop(handle.session_id, None)
 
     @staticmethod
     def _emit_update(

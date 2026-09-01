@@ -34,7 +34,7 @@ class ToolAgentState(TypedDict):
     turn_id: int
     compression_session: NotRequired[CompressionSession]
 
-AGENT_TOOLS = ["read_file", "get_file", "grep", "imageread", "agenttool", "shell_tool", "skill_tool"]
+AGENT_TOOLS = ["read_file", "get_file", "grep", "imageread", "agenttool", "shell_tool"]
 SKILLS = []
 
 

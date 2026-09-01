@@ -12,6 +12,7 @@ export interface Session {
   working_dir: string
   context_window_tokens: number
   recursion_limit: number
+  graph_entrypoint: string
   created_at: string
   updated_at: string
   archived: boolean

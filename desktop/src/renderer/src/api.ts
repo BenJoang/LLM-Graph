@@ -54,6 +54,19 @@ export async function updateSession(
   ).session
 }
 
+export async function deleteSession(sessionId: string): Promise<void> {
+  await request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+}
+
+export async function validateGraphEntrypoint(entrypoint: string): Promise<string> {
+  return (
+    await request<{ entrypoint: string; valid: boolean }>('/api/graphs/validate', {
+      method: 'POST',
+      body: JSON.stringify({ entrypoint }),
+    })
+  ).entrypoint
+}
+
 export async function cancelRun(runId: string) {
   return request(`/api/runs/${runId}/cancel`, { method: 'POST' })
 }

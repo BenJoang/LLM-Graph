@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
@@ -33,14 +34,18 @@ async function freePort(): Promise<number> {
 async function startBackend() {
   const port = await freePort()
   const token = randomBytes(32).toString('hex')
-  const directPython = process.env.LLM_GRAPH_PYTHON
-  const command = directPython || (process.platform === 'win32' ? 'conda.exe' : 'conda')
-  const args = directPython
-    ? ['-m', 'src.api.run_chat_api']
-    : ['run', '--no-capture-output', '-n', 'LLMv1', 'python', '-m', 'src.api.run_chat_api']
+  const root = projectRoot()
+  const projectPython = process.platform === 'win32'
+    ? join(root, '.venv', 'Scripts', 'python.exe')
+    : join(root, '.venv', 'bin', 'python')
+  const command = process.env.LLM_GRAPH_PYTHON || projectPython
+  if (!existsSync(command)) {
+    throw new Error(`项目 Python 不存在：${command}\n请先运行 setup.ps1 或 setup.bat。`)
+  }
+  const args = ['-m', 'src.api.run_chat_api']
 
   backendProcess = spawn(command, args, {
-    cwd: projectRoot(),
+    cwd: root,
     windowsHide: true,
     env: {
       ...process.env,

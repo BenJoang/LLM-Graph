@@ -633,7 +633,7 @@ def chat_once_thinking(client: OpenAI, profile: dict, prompt: dict, question: st
     save_response_json(response, question, request_data)
     return response.choices[0].message.content
 
-def chat_once_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.5) -> str:
+def chat_once_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.0) -> str:
     request_data = {
         "model": profile["model"],
         "messages": [
@@ -656,7 +656,7 @@ async def chat_once_nothinking_async(
     profile: dict,
     prompt: dict,
     question: str,
-    temperature: float = 1.5,
+    temperature: float = 1.0,
 ) -> str:
     request_data = {
         "model": profile["model"],
@@ -691,7 +691,7 @@ async def chat_once_nothinking_async(
     return response.choices[0].message.content or ""
 
 
-def chat_stream_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.5):
+def chat_stream_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.0):
     request_data = {
         "model": profile["model"],
         "messages": [

@@ -19,6 +19,7 @@ from src.context.context_compression import (
 )
 
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt
+from src.context.context_builder import build_system_context
 from src.client.mymodel_client import save_graph_mdv2
 from src.tools import registry
 
@@ -73,7 +74,13 @@ def make_initial_state(group_id: str, question: str) -> ToolAgentState:
 
 HISTORY_TOOL_NAMES = [
     "qq_memory_search",
-    "memory_search"
+    "memory_search",
+    "read_file",
+    "python_tool_weaker",
+]
+
+HISTORY_SKILLS = [
+    "degoog-search",
 ]
 
 IMAGE_TOOL_NAMES = [
@@ -111,7 +118,20 @@ def build_graph(profile_name: str = "qwen3.6",
     history_prompt = load_prompt("qq_memory_history")
     collapse_prompt = load_prompt("collapse_compact")
     
+    history_skill_context = build_system_context(
+        skill_names=HISTORY_SKILLS,
+        working_dir_need=False,
+        instruction_need=False,
+    )
 
+    history_system_content = "\n\n".join(
+        part
+        for part in [
+            history_prompt["system"],
+            history_skill_context,
+        ]
+        if part
+    )
     llm = build_chat_model(profile)
     chat_llm = build_chat_model(profile)
 
@@ -155,7 +175,10 @@ def build_graph(profile_name: str = "qwen3.6",
     async def need_history_node(state: ToolAgentState) -> dict:
 
         raw_messages = [
-            {"role": "system", "content": history_prompt["system"]},
+            {
+                "role": "system",
+                "content": history_system_content,
+            },
             *state["messages"],
             *state["history_messages"],
         ]
@@ -245,6 +268,12 @@ def build_graph(profile_name: str = "qwen3.6",
             messages.append({"role": "user", "content": f"图片识别结果:{last_image_content}"})
 
         response = await chat_llm.ainvoke(messages)
+        save_graph_mdv2(
+                    event_type="model",
+                    node_name="answer",
+                    response=response,
+                    filename="qq_main_graph_steps1.md",
+                )
 
         return {
             "messages": [response]

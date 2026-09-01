@@ -1,0 +1,4 @@
+interface:
+  display_name: "SearXNG Search"
+  short_description: "Search the web through the local private SearXNG instance"
+  default_prompt: "Use $searxng-search to search the web and answer with source links."

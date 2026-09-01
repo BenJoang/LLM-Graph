@@ -86,6 +86,13 @@ def open_checkpointer():
         yield saver
 
 
+def delete_checkpoint_thread(thread_id: str) -> None:
+    """Permanently delete every checkpoint row for one thread."""
+
+    with open_checkpointer() as saver:
+        saver.delete_thread(thread_id)
+
+
 @asynccontextmanager
 async def open_async_checkpointer():
     """Open an asynchronous saver for asynchronous graph runs."""
