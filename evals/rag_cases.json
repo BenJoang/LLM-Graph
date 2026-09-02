@@ -1,0 +1,35 @@
+{
+  "tenant_id": "study",
+  "cases": [
+    {
+      "question": "Windows GUI 怎么启动？",
+      "expected_document_ids": ["project-readme"]
+    },
+    {
+      "question": "如何恢复以前的对话？",
+      "expected_document_ids": [
+        "project-readme",
+        "langgraph-persistence"
+      ]
+    },
+    {
+      "question": "模型 API Key 在哪里配置？",
+      "expected_document_ids": ["project-readme"]
+    },
+    {
+      "question": "pgvector 有什么作用？",
+      "expected_document_ids": ["pgvector-study"]
+    },
+    {
+      "question": "thread_id 是做什么的？",
+      "expected_document_ids": [
+        "project-readme",
+        "langgraph-persistence"
+      ]
+    },
+    {
+      "question": "苹果和香蕉是什么？",
+      "expected_document_ids": ["control-document"]
+    }
+  ]
+}

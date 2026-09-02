@@ -12,6 +12,22 @@ from openai import AsyncOpenAI
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
+QUERY_INSTRUCTION = (
+    "Given a user question about an enterprise knowledge base, "
+    "retrieve relevant passages that answer the question"
+)
+
+
+def prepare_query_text(query: str) -> str:
+    query = query.strip()
+
+    if not query:
+        raise ValueError("query 不能为空")
+
+    return (
+        f"Instruct: {QUERY_INSTRUCTION}\n"
+        f"Query: {query}"
+    )
 
 @dataclass(frozen=True)
 class EmbeddingSettings:
@@ -110,7 +126,8 @@ class EmbeddingClient:
         return vectors
 
     def embed_query(self, query: str) -> list[float]:
-        vectors = self.embed_documents([query])
+        query_text = prepare_query_text(query)
+        vectors = self.embed_documents([query_text])
         return vectors[0]
 
 from openai import AsyncOpenAI
@@ -170,7 +187,8 @@ class AsyncEmbeddingClient:
         return vectors
 
     async def embed_query(self, query: str) -> list[float]:
-        vectors = await self.embed_documents([query])
+        query_text = prepare_query_text(query)
+        vectors = await self.embed_documents([query_text])
         return vectors[0]
 
     async def close(self) -> None:

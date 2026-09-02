@@ -28,3 +28,11 @@ requests==2.34.2
 fastapi==0.136.1
 uvicorn==0.47.0
 
+# Testing
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# RAG keyword retrieval
+jieba==0.42.1
+rank-bm25==0.2.2
+
