@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
   ArchiveRestore,
@@ -46,7 +46,12 @@ import {
   type ThemePreference,
 } from './theme'
 import { isNearBottom } from './scroll'
-import { buildConversationTurns, reduceLiveTimeline, summarizeToolArgs } from './conversation'
+import {
+  buildConversationTurns,
+  reduceLiveTimeline,
+  summarizeToolArgs,
+  type ConversationTurn,
+} from './conversation'
 import {
   CONTEXT_PRESETS,
   formatContextLimit,
@@ -62,6 +67,9 @@ import {
 } from './run-state'
 
 const DEFAULT_GRAPH_ENTRYPOINT = 'src.graphs.tool_agent_graph:astream_tool_agent'
+const MARKDOWN_PLUGINS = [remarkGfm]
+const EMPTY_MESSAGES: Message[] = []
+const EMPTY_RUN_STATE = idleRunState()
 
 interface Defaults {
   profile_name: string
@@ -107,13 +115,13 @@ function sessionGroup(value: string) {
   return '更早'
 }
 
-function Markdown({ children }: { children: string }) {
+const Markdown = memo(function Markdown({ children }: { children: string }) {
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{children}</ReactMarkdown>
     </div>
   )
-}
+})
 
 function CopyAction({ text, label = '复制' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
@@ -202,7 +210,7 @@ function RenameInput({
   )
 }
 
-function ToolCard({
+const ToolCard = memo(function ToolCard({
   name,
   args,
   content,
@@ -246,7 +254,7 @@ function ToolCard({
       )}
     </div>
   )
-}
+})
 
 function LiveRun({ parts, stopping }: { parts: LiveTimelinePart[]; stopping: boolean }) {
   return (
@@ -259,7 +267,36 @@ function LiveRun({ parts, stopping }: { parts: LiveTimelinePart[]; stopping: boo
   )
 }
 
-function MessageTimeline({
+const ConversationTurnUser = memo(function ConversationTurnUser({ user }: { user?: Message }) {
+  if (!user?.content) return null
+  return (
+    <div className="user-message-row">
+      <div className="user-message-stack">
+        <div className="user-bubble"><Markdown>{user.content}</Markdown></div>
+        <div className="message-actions"><CopyAction text={user.content} /></div>
+      </div>
+    </div>
+  )
+})
+
+const ConversationTurnParts = memo(function ConversationTurnParts({ parts }: { parts: ConversationTurn['parts'] }) {
+  return parts.map((part) => {
+    if (part.type === 'tool') {
+      return <ToolCard key={part.key} name={part.name} args={part.args} content={part.content} status={part.status} />
+    }
+    if (part.type === 'execution') {
+      return <div className="execution-note" key={part.key}><Sparkles size={13} /><Markdown>{part.content}</Markdown></div>
+    }
+    return (
+      <article className="assistant-answer" key={part.key}>
+        <Markdown>{part.content}</Markdown>
+        <div className="message-actions"><CopyAction text={part.content} label="复制回答" /></div>
+      </article>
+    )
+  })
+})
+
+const MessageTimeline = memo(function MessageTimeline({
   messages,
   running,
   stopping,
@@ -273,34 +310,14 @@ function MessageTimeline({
   const turns = useMemo(() => buildConversationTurns(messages), [messages])
   return <div className="timeline">{turns.map((turn, turnIndex) => (
     <section className="conversation-turn" key={turn.key}>
-      {turn.user?.content && (
-        <div className="user-message-row">
-          <div className="user-message-stack">
-            <div className="user-bubble"><Markdown>{turn.user.content}</Markdown></div>
-            <div className="message-actions"><CopyAction text={turn.user.content} /></div>
-          </div>
-        </div>
-      )}
+      <ConversationTurnUser user={turn.user} />
       <div className="turn-response">
-        {turn.parts.map((part) => {
-          if (part.type === 'tool') {
-            return <ToolCard key={part.key} name={part.name} args={part.args} content={part.content} status={part.status} />
-          }
-          if (part.type === 'execution') {
-            return <div className="execution-note" key={part.key}><Sparkles size={13} /><Markdown>{part.content}</Markdown></div>
-          }
-          return (
-            <article className="assistant-answer" key={part.key}>
-              <Markdown>{part.content}</Markdown>
-              <div className="message-actions"><CopyAction text={part.content} label="复制回答" /></div>
-            </article>
-          )
-        })}
+        <ConversationTurnParts parts={turn.parts} />
         {running && turnIndex === turns.length - 1 && <LiveRun parts={liveTimeline} stopping={stopping} />}
       </div>
     </section>
   ))}</div>
-}
+})
 
 function SessionLimitsMenu({
   session,
@@ -344,6 +361,124 @@ function SessionLimitsMenu({
       {validationError && <p className="limits-error">{validationError}</p>}
       <p className="limits-note">保存后从下一轮对话开始生效，不会修改新会话默认值。</p>
       <button className="limits-save" type="button" disabled={saving} onClick={() => void save()}>{saving ? '正在保存…' : '应用到当前会话'}</button>
+    </div>
+  )
+}
+
+function SessionComposer({
+  session,
+  running,
+  stopping,
+  runId,
+  initialDraft,
+  onDraftChange,
+  onSubmit,
+  onStop,
+  onSaveLimits,
+}: {
+  session: Session
+  running: boolean
+  stopping: boolean
+  runId: string | null
+  initialDraft: string
+  onDraftChange(value: string): void
+  onSubmit(question: string): Promise<void>
+  onStop(): Promise<void>
+  onSaveLimits(value: SessionLimits): Promise<void>
+}) {
+  const [draft, setDraft] = useState(initialDraft)
+  const [limitsOpen, setLimitsOpen] = useState(false)
+  const [limitsSaving, setLimitsSaving] = useState(false)
+  const limitsMenuRef = useRef<HTMLDivElement>(null)
+  const limitsSavingRef = useRef(false)
+
+  useEffect(() => {
+    if (!limitsOpen) return
+    const closeOnPointer = (event: MouseEvent) => {
+      if (!limitsMenuRef.current?.contains(event.target as Node)) setLimitsOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLimitsOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [limitsOpen])
+
+  function updateDraft(value: string) {
+    setDraft(value)
+    onDraftChange(value)
+  }
+
+  function submitDraft() {
+    const question = draft.trim()
+    if (!question || running || limitsSavingRef.current) return
+    updateDraft('')
+    setLimitsOpen(false)
+    void onSubmit(question)
+  }
+
+  async function saveLimits(value: SessionLimits) {
+    if (limitsSavingRef.current) return
+    limitsSavingRef.current = true
+    setLimitsSaving(true)
+    try {
+      await onSaveLimits(value)
+      setLimitsOpen(false)
+    } finally {
+      limitsSavingRef.current = false
+      setLimitsSaving(false)
+    }
+  }
+
+  return (
+    <div className="composer-wrap">
+      <div className="composer">
+        <textarea
+          value={draft}
+          disabled={running}
+          placeholder="告诉 LLM-Graph 你想完成什么…"
+          rows={1}
+          onChange={(event) => updateDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              submitDraft()
+            }
+          }}
+        />
+        <div className="composer-footer">
+          <div className="composer-meta">
+            <span><span className="status-dot" />{session.profile_name}</span>
+            <div className="limits-control" ref={limitsMenuRef}>
+              <button
+                className={`limits-trigger ${limitsOpen ? 'active' : ''}`}
+                type="button"
+                disabled={running}
+                aria-expanded={limitsOpen}
+                onClick={() => setLimitsOpen((value) => !value)}
+              >
+                <Gauge size={12} />{formatContextLimit(session.context_window_tokens)} ctx<ChevronDown size={11} />
+              </button>
+              {limitsOpen && (
+                <SessionLimitsMenu
+                  key={`${session.id}-${session.context_window_tokens}-${session.recursion_limit}`}
+                  session={session}
+                  saving={limitsSaving}
+                  onSave={saveLimits}
+                />
+              )}
+            </div>
+          </div>
+          {running
+            ? <button className="stop-button" disabled={!runId || stopping} onClick={() => void onStop()}><CircleStop size={16} />{stopping ? '正在停止' : '停止'}</button>
+            : <button className="send-button" disabled={!draft.trim() || limitsSaving} onClick={submitDraft}><Send size={16} />发送</button>}
+        </div>
+      </div>
+      <p className="composer-hint">Enter 发送 · Shift Enter 换行 · 工具会在当前工作目录中运行</p>
     </div>
   )
 }
@@ -433,7 +568,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   const [query, setQuery] = useState('')
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [runStates, setRunStates] = useState<SessionRunStates>({})
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -443,8 +577,6 @@ export default function App() {
   const [renameLocation, setRenameLocation] = useState<'sidebar' | 'header' | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
-  const [limitsOpen, setLimitsOpen] = useState(false)
-  const [limitsSaving, setLimitsSaving] = useState(false)
   const [graphDraft, setGraphDraft] = useState('')
   const [graphSaving, setGraphSaving] = useState(false)
   const [deleteCandidate, setDeleteCandidate] = useState<Session | null>(null)
@@ -455,9 +587,8 @@ export default function App() {
   const [atBottom, setAtBottom] = useState(true)
   const conversationRef = useRef<HTMLDivElement>(null)
   const conversationInnerRef = useRef<HTMLDivElement>(null)
-  const limitsMenuRef = useRef<HTMLDivElement>(null)
+  const draftsRef = useRef<Record<string, string>>({})
   const renameSavingRef = useRef(false)
-  const limitsSavingRef = useRef(false)
   const followBottomRef = useRef(true)
   const runAbortRef = useRef(new Map<string, AbortController>())
   const liveSequenceRef = useRef(new Map<string, number>())
@@ -484,21 +615,15 @@ export default function App() {
     }
   }, [profiles, detail?.session.working_dir, savedDefaults, themePreference])
 
-  const currentRun = selectedId ? runStates[selectedId] || idleRunState() : idleRunState()
+  const currentRun = selectedId ? runStates[selectedId] || EMPTY_RUN_STATE : EMPTY_RUN_STATE
   const running = currentRun.status !== 'idle'
   const stopping = currentRun.status === 'stopping'
-  const draft = selectedId ? drafts[selectedId] || '' : ''
   const liveTimeline = currentRun.liveTimeline
   const currentError = currentRun.error || error
-  const displayMessages = detail
+  const displayMessages = useMemo(() => detail
     ? messagesWithOptimistic(detail.messages, currentRun.optimisticMessage)
-    : []
+    : EMPTY_MESSAGES, [detail?.messages, currentRun.optimisticMessage])
   const graphLocked = Boolean(detail && (detail.messages.length > 0 || running))
-
-  function setCurrentDraft(value: string) {
-    if (!selectedId) return
-    setDrafts((items) => ({ ...items, [selectedId]: value }))
-  }
 
   function isSessionRunning(sessionId: string) {
     const status = runStates[sessionId]?.status
@@ -516,23 +641,6 @@ export default function App() {
   }, [themePreference])
 
   useEffect(() => {
-    if (!limitsOpen) return
-    const closeOnPointer = (event: MouseEvent) => {
-      if (!limitsMenuRef.current?.contains(event.target as Node)) setLimitsOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setLimitsOpen(false)
-    }
-    document.addEventListener('mousedown', closeOnPointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', closeOnPointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [limitsOpen])
-
-  useEffect(() => {
-    setLimitsOpen(false)
     setEditingSessionId(null)
     setRenameLocation(null)
     setGraphDraft(detail?.session.id === selectedId ? detail.session.graph_entrypoint : '')
@@ -571,7 +679,7 @@ export default function App() {
     setDetail({ session, messages: [] })
     followBottomRef.current = true
     setAtBottom(true)
-    setDrafts((items) => ({ ...items, [session.id]: '' }))
+    draftsRef.current[session.id] = ''
   }
 
   useEffect(() => {
@@ -683,11 +791,10 @@ export default function App() {
     return session
   }
 
-  async function submit() {
-    if (!detail || running || limitsSavingRef.current || !draft.trim()) return
+  async function submit(question: string) {
+    if (!detail || running || !question.trim()) return
     const sessionId = detail.session.id
-    const question = draft.trim()
-    setDrafts((items) => ({ ...items, [sessionId]: '' }))
+    draftsRef.current[sessionId] = ''
     setError(null)
     setRunStates((states) => updateSessionRunState(states, sessionId, () => ({
       status: 'running',
@@ -702,7 +809,6 @@ export default function App() {
       error: null,
     })))
     liveSequenceRef.current.set(sessionId, 0)
-    setLimitsOpen(false)
     followBottomRef.current = true
     setAtBottom(true)
     const abortController = new AbortController()
@@ -823,16 +929,7 @@ export default function App() {
   }
 
   async function saveSessionLimits(value: SessionLimits) {
-    if (limitsSavingRef.current) return
-    limitsSavingRef.current = true
-    setLimitsSaving(true)
-    try {
-      await patchCurrent(value)
-      setLimitsOpen(false)
-    } finally {
-      limitsSavingRef.current = false
-      setLimitsSaving(false)
-    }
+    await patchCurrent(value)
   }
 
   async function commitGraphEntrypoint() {
@@ -907,11 +1004,7 @@ export default function App() {
         delete next[sessionId]
         return next
       })
-      setDrafts((items) => {
-        const next = { ...items }
-        delete next[sessionId]
-        return next
-      })
+      delete draftsRef.current[sessionId]
       if (selectedIdRef.current === sessionId) {
         const next = remaining[0] || null
         if (next) {
@@ -980,7 +1073,18 @@ export default function App() {
             </div>
           </div>
           {!atBottom && <button className="to-bottom-button" type="button" aria-label="回到底部" onClick={scrollToBottom}><ArrowDown size={16} /></button>}
-          <div className="composer-wrap"><div className="composer"><textarea value={draft} disabled={running} placeholder="告诉 LLM-Graph 你想完成什么…" rows={1} onChange={(event) => setCurrentDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit() } }} /><div className="composer-footer"><div className="composer-meta"><span><span className="status-dot" />{detail.session.profile_name}</span><div className="limits-control" ref={limitsMenuRef}><button className={`limits-trigger ${limitsOpen ? 'active' : ''}`} type="button" disabled={running} aria-expanded={limitsOpen} onClick={() => setLimitsOpen((value) => !value)}><Gauge size={12} />{formatContextLimit(detail.session.context_window_tokens)} ctx<ChevronDown size={11} /></button>{limitsOpen && <SessionLimitsMenu key={`${detail.session.id}-${detail.session.context_window_tokens}-${detail.session.recursion_limit}`} session={detail.session} saving={limitsSaving} onSave={saveSessionLimits} />}</div></div>{running ? <button className="stop-button" disabled={!currentRun.runId || stopping} onClick={() => void stop()}><CircleStop size={16} />{stopping ? '正在停止' : '停止'}</button> : <button className="send-button" disabled={!draft.trim() || limitsSaving} onClick={() => void submit()}><Send size={16} />发送</button>}</div></div><p className="composer-hint">Enter 发送 · Shift Enter 换行 · 工具会在当前工作目录中运行</p></div>
+          <SessionComposer
+            key={detail.session.id}
+            session={detail.session}
+            running={running}
+            stopping={stopping}
+            runId={currentRun.runId}
+            initialDraft={draftsRef.current[detail.session.id] || ''}
+            onDraftChange={(value) => { draftsRef.current[detail.session.id] = value }}
+            onSubmit={submit}
+            onStop={stop}
+            onSaveLimits={saveSessionLimits}
+          />
         </> : <div className="empty-workspace"><Bot size={28} /><p>创建一个会话开始使用</p><button className="primary-button" onClick={() => void addSession()}>新建会话</button></div>}
       </main>
       {settingsOpen && <SettingsDialog profiles={profiles} initial={defaults} onClose={() => setSettingsOpen(false)} onSave={async (value) => { const graphEntrypoint = await validateGraphEntrypoint(value.graph_entrypoint); const normalized = { ...value, graph_entrypoint: graphEntrypoint }; localStorage.setItem(DEFAULTS_KEY, JSON.stringify(normalized)); setSavedDefaults(normalized); setThemePreference(value.theme); setSettingsOpen(false) }} />}

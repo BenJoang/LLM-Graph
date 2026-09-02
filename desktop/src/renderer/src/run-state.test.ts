@@ -31,6 +31,17 @@ describe('per-session run state', () => {
     const checkpointed = [{ ...optimistic, id: 'persisted' }]
 
     expect(messagesWithOptimistic([], optimistic)).toEqual([optimistic])
-    expect(messagesWithOptimistic(checkpointed, optimistic)).toEqual(checkpointed)
+    expect(messagesWithOptimistic(checkpointed, optimistic)).toBe(checkpointed)
+  })
+
+  it('preserves the message array reference when there is no optimistic message', () => {
+    const messages = [{
+      id: 'persisted',
+      role: 'assistant',
+      content: '完成',
+      tool_calls: [],
+    }]
+
+    expect(messagesWithOptimistic(messages, null)).toBe(messages)
   })
 })

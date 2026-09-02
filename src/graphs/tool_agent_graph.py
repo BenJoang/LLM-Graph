@@ -35,7 +35,7 @@ class ToolAgentState(TypedDict):
     compression_session: NotRequired[CompressionSession]
 
 AGENT_TOOLS = ["read_file", "get_file", "grep", "imageread", "agenttool", "shell_tool"]
-SKILLS = []
+SKILLS = ["degoog-search"]
 
 
 def build_graph(
