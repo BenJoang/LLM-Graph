@@ -76,6 +76,7 @@ def bm25_search(
     if not chunks:
         return []
 
+    # 把问题切词
     query_tokens = tokenize(question)
 
     if not query_tokens:

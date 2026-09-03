@@ -38,8 +38,9 @@ async def _embed_chunks_concurrently(
 
     if not chunks:
         return []
-
+    #各批次起点
     batch_starts = list(range(0, len(chunks), batch_size))
+    #限制同时并发数量量
     semaphore = asyncio.Semaphore(max_concurrency)
 
     # 预留结果位置，确保并发完成顺序不会打乱 chunk 顺序。
@@ -66,6 +67,7 @@ async def _embed_chunks_concurrently(
 
         batch_results[batch_index] = vectors
 
+    #这里是注册任务，还没开始跑
     async with asyncio.TaskGroup() as task_group:
         for batch_index, start in enumerate(batch_starts):
             task_group.create_task(

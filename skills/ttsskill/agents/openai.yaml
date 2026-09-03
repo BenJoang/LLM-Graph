@@ -1,0 +1,6 @@
+interface:
+  display_name: "胡桃语音合成"
+  short_description: "用 IndexTTS 2.5 克隆并播放胡桃角色语音"
+  default_prompt: "使用 $ttsskill 让胡桃朗读我提供的中文文本并播放。"
+policy:
+  allow_implicit_invocation: true

@@ -64,14 +64,16 @@ class AsyncPostgresRagStore:
     def __init__(self, database_url: str):
         self.database_url = database_url
 
+
+    # 把切块结果和向量配对替换进rag.document_chunks 表
     async def replace_document(
         self,
         *,
         tenant_id: str,
         document_id: str,
         source: str,
-        chunks: list[TextChunk],
-        embeddings: list[list[float]],
+        chunks: list[TextChunk],  # ← chunking.py 的产物
+        embeddings: list[list[float]],  # ← embedding_client.py 的产物
         embedding_model: str,
         metadata: dict | None = None,
     ) -> int:
@@ -148,15 +150,17 @@ class AsyncPostgresRagStore:
                         )
 
         return len(rows)
+    
     async def search_chunks(
         self,
         *,
         tenant_id: str,
-        query_embedding: list[float],
+        query_embedding: list[float],  # ← embed_query 的产物
         embedding_model: str,
         embedding_dimensions: int,
         top_k: int = 5,
     ) -> list[RagSearchResult]:
+        # 检索用
         if not 1 <= top_k <= 100:
             raise ValueError("top_k 必须在 1 到 100 之间")
 
@@ -168,7 +172,7 @@ class AsyncPostgresRagStore:
             )
 
         query_vector = vector_literal(query_embedding)
-
+        # <=>：pgvector 的余弦距离操作符
         sql = """
         SELECT
             chunk_id,

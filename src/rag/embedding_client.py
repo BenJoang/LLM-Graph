@@ -109,7 +109,7 @@ class EmbeddingClient:
             list(item.embedding)
             for item in items
         ]
-
+        #数量维度检验
         if len(vectors) != len(normalized):
             raise RuntimeError(
                 "Embedding 服务返回的向量数量与输入数量不一致"
@@ -124,14 +124,11 @@ class EmbeddingClient:
                 )
 
         return vectors
-
+    # 查询端入口：先拼指令文本，再走同一个 embed_documents（包成单元素列表），取回第一个向量。
     def embed_query(self, query: str) -> list[float]:
         query_text = prepare_query_text(query)
         vectors = self.embed_documents([query_text])
         return vectors[0]
-
-from openai import AsyncOpenAI
-
 
 class AsyncEmbeddingClient:
     def __init__(
