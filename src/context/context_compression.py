@@ -161,7 +161,7 @@ class MessageManage:
         retry_messages = deepcopy(messages)
         session = load_compression_session(compression_session)
         changed = False
-        '''待完成'''
+        '''已完成'''
         if level == 1:
             changed = self._retry_merge_summary_messages(
                 retry_messages,

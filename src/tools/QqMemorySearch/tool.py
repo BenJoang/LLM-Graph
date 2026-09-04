@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
 from pydantic import BaseModel, Field
+import base64
+import mmap
 
 
 TOOL_NAME = "qq_memory_search"
@@ -13,13 +15,26 @@ QQ_MEMORY_DIR = BASE_DIR / "memory" / "qq_memory" / "groups"
 MAX_SCAN_LINES = 1000
 
 class InputSchema(BaseModel):
-    group_index: str = Field(description="需要进行搜索的QQ群号")
-    limit: int = Field(default=20, description="返回的消息数量，默认为20，最大为100")
-    cursor: int | None = Field(default=None, description="从jsonl文件的第几行开始读取，默认为None表示从最新消息开始")
+    group_index: str = Field(
+        pattern=r"^\d+$",
+        description="需要进行搜索的QQ群号",
+    )
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="返回的消息数量，默认为20，最大为100",
+    )
+    cursor: str | None = Field(
+        default=None,
+        description=(
+            "不透明分页游标。第一次调用留空；"
+            "继续翻页时必须原样传回 next_cursor"
+        ),
+    )
 
 class QqMessageResult(BaseModel):
     datetime: str = Field(description="消息的日期时间，格式为 'YYYY-MM-DD HH:MM:SS'")
-    line_index: int = Field(description="消息在jsonl文件中的行号")
     user_id: int | None = Field(default=None, description="发送消息的用户ID")
     display_name: str | None = Field(default=None, description="发送消息的用户显示名称")
     summary: str = Field(description="消息的摘要，格式为 '显示名称(用户ID): 消息内容'")
@@ -33,9 +48,10 @@ class SearchResult(BaseModel):
     messages: list[QqMessageResult] = Field(description="搜索到的消息列表")
     count: int = Field(description="搜索到的消息数量")
     has_more: bool = Field(description="是否还有更多消息可以搜索")
-    next_cursor: int | None = Field(default=None, description="下一次搜索时使用的cursor值，如果has_more为True则不为None")
-    total_lines: int = Field(description="jsonl文件中的总行数")
-    start_cursor: int | None = Field(default=None, description="本次读取开始位置")
+    next_cursor: str | None = Field(default=None, description="下一次搜索时使用的cursor值，如果has_more为True则不为None")
+    scanned_count: int = Field(description="本次检索链累计向前扫描了多少条")
+    start_cursor: str | None = Field(default=None, description="本次读取开始位置")
+    file_size: int = Field(description="读取开始时的jsonl文件字节数")
 
 
 class OutputSchema(BaseModel):
@@ -60,7 +76,186 @@ def validate_input(**kwargs) -> tuple[bool, str]:
     return True, ""
 
 def resolve_group_file(group_index: str) -> Path:
-    return QQ_MEMORY_DIR / group_index / "dialog" / "messages.jsonl"
+    if not group_index.isdigit():
+        raise ValueError("QQ群号必须是纯数字")
+
+    root = QQ_MEMORY_DIR.resolve()
+    path = (
+        root
+        / group_index
+        / "dialog"
+        / "messages.jsonl"
+    ).resolve()
+
+    if root not in path.parents:
+        raise ValueError("群聊记录路径越界")
+
+    return path
+
+def encode_cursor(
+    group_index: str,
+    offset: int,
+    scanned_count: int,
+) -> str:
+    raw = f"{group_index}:{offset}:{scanned_count}"
+    return base64.urlsafe_b64encode(
+        raw.encode("utf-8")
+    ).decode("ascii")
+
+
+def decode_cursor(
+    cursor: str | None,
+    *,
+    group_index: str,
+    file_size: int,
+) -> tuple[int, int]:
+    if cursor is None:
+        return file_size, 0
+
+    try:
+        raw = base64.urlsafe_b64decode(
+            cursor.encode("ascii")
+        ).decode("utf-8")
+
+        cursor_group, offset_text, scanned_text = (
+            raw.split(":", 2)
+        )
+
+        offset = int(offset_text)
+        scanned_count = int(scanned_text)
+    except Exception as exc:
+        raise ValueError("cursor 格式不正确") from exc
+
+    if cursor_group != group_index:
+        raise ValueError("cursor 不属于当前 QQ 群")
+
+    if not 0 <= offset <= file_size:
+        raise ValueError("cursor 字节位置已经失效")
+
+    if not 0 <= scanned_count <= MAX_SCAN_LINES:
+        raise ValueError("cursor 扫描数量不正确")
+
+    return offset, scanned_count
+
+def read_reverse_page(
+    file_path: Path,
+    *,
+    group_index: str,
+    cursor: str | None,
+    limit: int,
+) -> tuple[
+    list[QqMessageResult],
+    str | None,
+    bool,
+    int,
+    int,
+]:
+    if not 1 <= limit <= 100:
+        raise ValueError("limit 必须在 1 到 100 之间")
+
+    with file_path.open("rb") as file:
+        file.seek(0, 2)
+        file_size = file.tell()
+
+        if file_size == 0:
+            return [], None, False, 0, 0
+
+        position, already_scanned = decode_cursor(
+            cursor,
+            group_index=group_index,
+            file_size=file_size,
+        )
+
+        remaining = MAX_SCAN_LINES - already_scanned
+
+        if remaining <= 0:
+            return [], None, False, already_scanned, file_size
+
+        page_limit = min(limit, remaining)
+
+        results: list[QqMessageResult] = []
+        scanned_this_page = 0
+
+        with mmap.mmap(
+            file.fileno(),
+            length=0,
+            access=mmap.ACCESS_READ,
+        ) as data:
+            while (
+                position > 0
+                and len(results) < page_limit
+                and scanned_this_page < remaining
+            ):
+                line_end = position
+
+                # 跳过当前行之前的 CR/LF
+                while (
+                    line_end > 0
+                    and data[line_end - 1] in (10, 13)
+                ):
+                    line_end -= 1
+
+                if line_end == 0:
+                    position = 0
+                    break
+
+                newline_position = data.rfind(
+                    b"\n",
+                    0,
+                    line_end,
+                )
+                line_start = newline_position + 1
+
+                raw_line = data[line_start:line_end]
+                position = line_start
+                scanned_this_page += 1
+
+                if not raw_line.strip():
+                    continue
+
+                try:
+                    record = json.loads(
+                        raw_line.decode("utf-8")
+                    )
+                except (
+                    UnicodeDecodeError,
+                    json.JSONDecodeError,
+                ):
+                    continue
+
+                results.append(
+                    build_message_result(record)
+                )
+
+    # 反向读取时是“新到旧”，返回给模型前恢复成“旧到新”
+    results.reverse()
+
+    scanned_count = (
+        already_scanned + scanned_this_page
+    )
+
+    has_more = (
+        position > 0
+        and scanned_count < MAX_SCAN_LINES
+    )
+
+    next_cursor = (
+        encode_cursor(
+            group_index,
+            position,
+            scanned_count,
+        )
+        if has_more
+        else None
+    )
+
+    return (
+        results,
+        next_cursor,
+        has_more,
+        scanned_count,
+        file_size,
+    )
 
 
 def call(**kwargs) -> dict:
@@ -84,147 +279,31 @@ def call(**kwargs) -> dict:
                 data=None,
             ).model_dump()
 
-        lines = group_file.read_text(encoding="utf-8").splitlines()
-        total_lines = len(lines)
-
-        if total_lines == 0:
-            return OutputSchema(
-                ok=True,
-                error="",
-                data=SearchResult(
-                    group_index=input_data.group_index,
-                    messages=[],
-                    count=0,
-                    has_more=False,
-                    next_cursor=None,
-                    total_lines=total_lines,
-                    start_cursor=None,
-                ),
-            ).model_dump()
-
-        # 规范化单次读取数量
-        limit = input_data.limit
-
-        if limit <= 0:
-            limit = 20
-
-        if limit > 100:
-            limit = 100
-
-        # 计算当前 cursor 已经从文档末尾向前跨过多少行
-        if input_data.cursor is None:
-            already_scanned = 0
-        else:
-            # 防止 cursor 越界
-            if input_data.cursor < 1 or input_data.cursor > total_lines:
-                return OutputSchema(
-                    ok=False,
-                    error=(
-                        f"cursor 非法：{input_data.cursor}，"
-                        f"有效范围为 1 到 {total_lines}"
-                    ),
-                    data=None,
-                ).model_dump()
-
-            # cursor 是上一次已经返回的最旧行，因此需要包含 cursor 所在行
-            already_scanned = total_lines - input_data.cursor + 1
-
-        # 已经读满限制，拒绝继续调用
-        if already_scanned >= MAX_SCAN_LINES:
-            return OutputSchema(
-                ok=False,
-                error=(
-                    f"已达到 qq_memory_search 的查阅上限："
-                    f"最多允许查阅最近 {MAX_SCAN_LINES} 行记录"
-                    f"不要再进行该工具调用"
-                ),
-                data=None,
-            ).model_dump()
-
-        # 防止当前这一页越过最大读取范围
-        remaining_lines = MAX_SCAN_LINES - already_scanned
-        limit = min(limit, remaining_lines)
-
-        # 允许读取到的最旧位置，使用零基索引
-        floor_index = max(0, total_lines - MAX_SCAN_LINES)
-
-        if input_data.cursor is None:
-            start_index = total_lines - 1
-        else:
-            # cursor 所在行已经在上一页返回，所以从它的前一行开始
-            start_index = input_data.cursor - 2
-
-        if start_index < 0:
-            return OutputSchema(
-                ok=True,
-                error="",
-                data=SearchResult(
-                    group_index=input_data.group_index,
-                    messages=[],
-                    count=0,
-                    has_more=False,
-                    next_cursor=None,
-                    total_lines=total_lines,
-                    start_cursor=input_data.cursor,
-                ),
-            ).model_dump()
-
-        selected_items = []
-        current_index = start_index
-
-        # 除了限制返回数量，也限制不能越过 floor_index
-        while (
-            current_index >= floor_index
-            and len(selected_items) < limit
-        ):
-            line = lines[current_index].strip()
-
-            if not line:
-                current_index -= 1
-                continue
-
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                current_index -= 1
-                continue
-
-            line_index = current_index + 1
-
-            selected_items.append(
-                build_message_result(record, line_index)
-            )
-
-            current_index -= 1
-
-        oldest_line_index = (
-            selected_items[-1].line_index
-            if selected_items
-            else None
+        (
+            messages,
+            next_cursor,
+            has_more,
+            scanned_count,
+            file_size,
+        ) = read_reverse_page(
+            group_file,
+            group_index=input_data.group_index,
+            cursor=input_data.cursor,
+            limit=input_data.limit,
         )
-
-        # 只判断限制范围内是否还有可读取的行
-        has_more = current_index >= floor_index
-
-        next_cursor = (
-            oldest_line_index
-            if has_more
-            else None
-        )
-
-        selected_items.reverse()
 
         return OutputSchema(
             ok=True,
             error="",
             data=SearchResult(
                 group_index=input_data.group_index,
-                messages=selected_items,
-                count=len(selected_items),
+                messages=messages,
+                count=len(messages),
                 has_more=has_more,
                 next_cursor=next_cursor,
-                total_lines=total_lines,
+                scanned_count=scanned_count,
                 start_cursor=input_data.cursor,
+                file_size=file_size,
             ),
         ).model_dump()
 
@@ -235,16 +314,22 @@ def call(**kwargs) -> dict:
             data=None,
         ).model_dump()
 
-def build_message_result(record: dict, line_index: int) -> QqMessageResult:
+def build_message_result(
+    record: dict,
+) -> QqMessageResult:
     return QqMessageResult(
         datetime=record.get("datetime", ""),
-        line_index=line_index,
         user_id=record.get("user_id"),
-        display_name=record.get("display_name") or record.get("nickname") or record.get("card"),
+        display_name=(
+            record.get("display_name")
+            or record.get("nickname")
+            or record.get("card")
+        ),
         summary=record.get("summary", ""),
         image_urls=extract_image_urls(record),
+        group_name=record.get("group_name"),
         reply=record.get("reply"),
-        message_id=record.get("message_id")
+        message_id=record.get("message_id"),
     )
 
 def extract_image_urls(record: dict) -> list[str]:
@@ -269,18 +354,9 @@ def render_result_for_llm(result: dict) -> str:
     if data is None:
         return "没有读取到群聊记录。"
     
-    if data.start_cursor is None:
-        total_count = data.count
-    else:
-        total_count = data.total_lines - data.start_cursor - data.count
-    
-    group_name = output.data.messages[0].group_name if output.data.messages else "未知群聊"
-
     lines = [
-        f"到目前为止总共检索了{total_count}条记录\n"
-        f"以下继续读取群 {data.group_index} 的 {data.count} 条记录。",
-        f"total_lines: {data.total_lines}",
-        f"start_cursor: {data.start_cursor}",
+        f"本轮返回群 {data.group_index} 的 {data.count} 条记录。",
+        f"本次检索链累计向前扫描了 {data.scanned_count} 条记录。",
         f"has_more: {data.has_more}",
         f"next_cursor: {data.next_cursor}",
         "消息记录：",

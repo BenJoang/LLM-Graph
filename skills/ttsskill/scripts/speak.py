@@ -18,7 +18,31 @@ from urllib.request import Request, urlopen
 
 DEFAULT_API_BASE = "http://192.168.10.71:8092"
 DEFAULT_MODEL = "/models/indextts"
+DEFAULT_LANGUAGE = "zhen"
 MAX_REFERENCE_BYTES = 10 * 1024 * 1024
+
+LANGUAGE_ALIASES = {
+    "zh": "zh",
+    "chinese": "zh",
+    "en": "en",
+    "english": "en",
+    "zhen": "zhen",
+    "mixed": "zhen",
+    "zh-en": "zhen",
+    "chinese-english": "zhen",
+    "ja": "ja",
+    "japanese": "ja",
+    "yue": "yue",
+    "cantonese": "yue",
+}
+
+
+def normalize_language(value: str) -> str:
+    language = LANGUAGE_ALIASES.get(value.strip().lower())
+    if language is None:
+        supported = ", ".join(("zhen", "zh", "en", "ja", "yue"))
+        raise argparse.ArgumentTypeError(f"不支持的语言 {value!r}；可用值：{supported}")
+    return language
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,7 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="IndexTTS server base URL (default: INDEXTTS_URL or %(default)s).",
     )
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model ID exposed by the server.")
-    parser.add_argument("--language", default="Chinese", help="Language value sent to IndexTTS.")
+    parser.add_argument(
+        "--language",
+        type=normalize_language,
+        default=DEFAULT_LANGUAGE,
+        help="IndexTTS language code (default: zhen for mixed Chinese-English; zh/en/ja/yue also supported).",
+    )
     parser.add_argument("--speed", type=float, default=0.9, help="Speech speed from 0.25 to 4.0.")
     parser.add_argument("--seed", type=int, default=42, help="Generation seed.")
     parser.add_argument("--output", help="Destination .wav path; relative paths use the current directory.")
@@ -104,7 +133,7 @@ def synthesize(
         "speed": speed,
         "stream": False,
         "task_type": "Base",
-        "language": language,
+        "extra_params": {"lang": language},
         "ref_audio": make_audio_data_uri(reference_audio),
         "ref_text": reference_text,
         "x_vector_only_mode": False,

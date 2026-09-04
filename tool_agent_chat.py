@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.observability import setup_phoenix_tracing
+
+setup_phoenix_tracing()
+
 from src.client.mymodel_client import serialize_message
 from src.graphs.tool_agent_graph import arun_tool_agent
 

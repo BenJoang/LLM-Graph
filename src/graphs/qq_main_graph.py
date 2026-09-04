@@ -74,7 +74,6 @@ def make_initial_state(group_id: str, question: str) -> ToolAgentState:
 
 HISTORY_TOOL_NAMES = [
     "qq_memory_search",
-    "memory_search",
     "read_file",
     "python_tool_weaker",
 ]

@@ -1,4 +1,4 @@
-# LLM-Graph 本地 PostgreSQL、pgvector 与 Embedding 部署记录
+# LLM-Graph 本地 PostgreSQL、pgvector、Embedding 与 Phoenix 部署记录
 
 这份文档记录当前机器上 `E:\Code Program\llm-graph-postgres` 的部署思路，目标是即使原目录或 Docker 容器丢失，也能根据本文重新搭建一套与当前 LLM-Graph 项目兼容的本地服务。
 
@@ -17,13 +17,17 @@ Windows / LLM-Graph
 │  └─ rag.document_chunks（RAG 文档块和 1024 维向量）
 ├─ Qwen3 Embedding: 127.0.0.1:8001
 │  └─ OpenAI-compatible /v1/embeddings
+├─ Phoenix: 127.0.0.1:6006
+│  ├─ Agent、LangGraph、LLM 和工具调用 trace
+│  ├─ Dataset、Experiment 与 Evaluation UI
+│  └─ OTLP HTTP 6006 / OTLP gRPC 4317
 ├─ Degoog: 127.0.0.1:4444
 │  └─ 本地 Web 搜索服务，可选
 └─ Valkey
    └─ 只在 Compose 内部供 Degoog 使用，不暴露宿主机端口
 ```
 
-对 RAG 来说，必需服务只有 `postgres` 和 `embedding`。Degoog、Valkey 是同一套 Compose 中的其他本地能力，不参与向量入库和混合检索。
+对 RAG 来说，必需服务只有 `postgres` 和 `embedding`。Phoenix 是独立的可观测性与评估服务；Degoog、Valkey 是同一套 Compose 中的其他本地能力，不参与向量入库和混合检索。
 
 当前实测环境快照：
 
@@ -39,6 +43,10 @@ Windows / LLM-Graph
 | 对外模型名 | `qwen3-embedding-4b` |
 | 输出向量维度 | 1024 |
 | PostgreSQL 数据卷 | `llm_graph_managed_postgres_data` |
+| Phoenix 数据卷 | `llm_graph_managed_phoenix_data` |
+| 当前 Phoenix 版本 | `20.7.0` |
+| Phoenix UI / OTLP HTTP | `http://127.0.0.1:6006` |
+| Phoenix OTLP gRPC | `127.0.0.1:4317` |
 | Compose 网络 | `llm-graph-managed_default` |
 
 `latest` 和 `pg16` 标签可能随时间变化，因此上表描述的是当前曾验证成功的状态，不代表未来重新拉取相同标签时一定得到完全相同的镜像内容。
@@ -50,6 +58,7 @@ pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567
 vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
 ghcr.io/degoog-org/degoog@sha256:a90a6e66765b7c05ec25c7bccaef55da3fc4e52ac0108abaebef81a3f6c1b4ba
 valkey/valkey@sha256:a174b894902bd3367e330d47cc2054367dc4917701776aaf336f41d83b65ec7a
+arizephoenix/phoenix@sha256:9be0666f810ed44cffd1ea9c5ff76477d1b1916c24c4c4a9f84e530f23f634c8
 ```
 
 日常可以继续使用标签；如果以后要求字节级可复现，可将 Compose 中的镜像标签替换为以上 digest。
@@ -124,6 +133,10 @@ POSTGRES_PASSWORD=replace_with_a_strong_password
 POSTGRES_DB=llm_graph
 POSTGRES_PORT=5434
 
+PHOENIX_HOST=127.0.0.1
+PHOENIX_HTTP_PORT=6006
+PHOENIX_GRPC_PORT=4317
+
 RAG_EMBEDDING_API_KEY=replace_with_a_private_embedding_key
 
 DEGOOG_VERSION=latest
@@ -190,6 +203,35 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: llm-graph-phoenix-managed
+    restart: unless-stopped
+
+    ports:
+      - "${PHOENIX_HOST:-127.0.0.1}:${PHOENIX_HTTP_PORT:-6006}:6006"
+      - "${PHOENIX_HOST:-127.0.0.1}:${PHOENIX_GRPC_PORT:-4317}:4317"
+
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+
+    volumes:
+      - phoenix_data:/mnt/data
+
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    # 个人开发负载的保护性上限，不是 Phoenix 官方最低要求。
+    mem_limit: 2g
 
   embedding:
     image: vllm/vllm-openai:latest
@@ -277,6 +319,8 @@ services:
 volumes:
   postgres_data:
     name: llm_graph_managed_postgres_data
+  phoenix_data:
+    name: llm_graph_managed_phoenix_data
   valkey_data:
 ```
 
@@ -376,6 +420,7 @@ docker compose up -d postgres embedding
 
 ```text
 postgres     healthy   127.0.0.1:5434->5432
+phoenix      healthy   127.0.0.1:6006->6006、127.0.0.1:4317->4317
 embedding    running   127.0.0.1:8001->8000
 degoog       healthy   127.0.0.1:4444->4444
 valkey       healthy   仅 Compose 内部端口
@@ -457,7 +502,39 @@ $response.data[0].embedding.Count
 
 如果不是 1024，不能直接写入当前的 `vector(1024)` 列。需要先让模型服务维度和数据库表结构一致。
 
-### 8.3 Degoog（可选）
+### 8.3 Phoenix
+
+打开 Phoenix：
+
+```text
+http://127.0.0.1:6006
+```
+
+验证 HTTP 服务：
+
+```powershell
+$response = Invoke-WebRequest `
+  -UseBasicParsing `
+  -Uri "http://127.0.0.1:6006"
+
+$response.StatusCode
+```
+
+预期状态码是 `200`。查看容器和持久卷：
+
+```powershell
+docker compose ps phoenix
+docker compose logs --tail 100 phoenix
+docker volume inspect llm_graph_managed_phoenix_data
+```
+
+当前 Phoenix 仅绑定 `127.0.0.1`，默认认证关闭但局域网无法直接访问。不要为了远程访问简单改成 `6006:6006`；需要跨机器访问时，应先按照 Phoenix 官方文档启用认证、设置强 `PHOENIX_SECRET`、修改默认管理员密码并创建系统 API Key。
+
+Phoenix 不需要 GPU。个人开发先使用独立 SQLite volume，避免可观测性数据与业务 PostgreSQL 互相影响。数据量或并发明显增长后，可以建立独立的 Phoenix 数据库和用户，再通过 `PHOENIX_SQL_DATABASE_URL` 接入 PostgreSQL 14 以上版本。
+
+2026-09-04 在当前机器上的验收结果：Phoenix `20.7.0` 容器为 `healthy`，UI 返回 HTTP `200`，空载内存约 `468 MiB`；`phoenix-install-check` 与批处理版 `phoenix-batch-install-check` 两条测试 span 均可从 `llm-graph` project 的 REST API 查询到，且容器重建后旧 span 仍存在。
+
+### 8.4 Degoog（可选）
 
 打开：
 
@@ -489,6 +566,11 @@ RAG_EMBEDDING_BASE_URL=http://127.0.0.1:8001/v1
 RAG_EMBEDDING_API_KEY=<与基础设施RAG_EMBEDDING_API_KEY相同的值>
 RAG_EMBEDDING_MODEL=qwen3-embedding-4b
 RAG_EMBEDDING_DIMENSIONS=1024
+
+# Phoenix 默认关闭；确认本地 Phoenix 正常后再开启
+PHOENIX_TRACING_ENABLED=true
+PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:6006
+PHOENIX_PROJECT_NAME=llm-graph
 ```
 
 最重要的对应关系：
@@ -502,6 +584,32 @@ RAG_EMBEDDING_DIMENSIONS=1024
 | `RAG_EMBEDDING_API_KEY` | `RAG_EMBEDDING_API_KEY` |
 | `--served-model-name` | `RAG_EMBEDDING_MODEL` |
 | `pooler-config dimensions=1024` | `RAG_EMBEDDING_DIMENSIONS=1024` |
+
+Phoenix tracing 需要项目 Python 环境安装：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-LLMv1.txt
+```
+
+项目依赖中固定了：
+
+```text
+arize-phoenix-otel==0.17.1
+openinference-instrumentation-langchain==0.1.73
+```
+
+`tool_agent_chat.py` 和 FastAPI/GUI 入口会调用 `src.observability.setup_phoenix_tracing()`。只有 `PHOENIX_TRACING_ENABLED=true` 时才注册 OpenInference；关闭或删除该变量不会上传 trace，也不影响 Agent 正常运行。
+
+项目在 Windows 主机运行时使用 `http://127.0.0.1:6006`。如果以后把 Python 后端也放入这份 Compose，则容器内不能使用 `127.0.0.1`，应改成 `http://phoenix:6006`。
+
+第一次验证 tracing：
+
+```powershell
+Set-Location "E:\Code Program\LLM-Graph"
+.\.venv\Scripts\python.exe tool_agent_chat.py
+```
+
+完成一次普通对话后，在 `http://127.0.0.1:6006` 的 Traces 页面选择 `llm-graph` project，应当能看到 LangGraph、ChatOpenAI 和工具调用 spans。Phoenix 只负责记录和评估，不代理模型请求；本地 Qwen 和 DeepSeek 的原有连接方式保持不变。
 
 项目的 LangGraph checkpoint 和 RAG 可以使用同一个 PostgreSQL 实例，也可以分开。当前默认 checkpoint 仍是 SQLite：
 
@@ -574,6 +682,7 @@ docker compose ps
 ```powershell
 docker compose logs --tail 100 postgres
 docker compose logs --tail 100 embedding
+docker compose logs --tail 100 phoenix
 docker compose logs --tail 100 degoog
 ```
 
@@ -736,6 +845,10 @@ asyncio.run(
 4. `backups` 没有定时任务，需要手动执行或以后添加计划任务。
 5. Python BM25 每次查询会重新加载租户 chunk 并构建索引，只适合当前小规模知识库。
 6. 当前没有 HNSW/IVFFlat 向量索引；数据规模增长后应先测量延迟，再决定是否增加。
+7. Phoenix 当前使用独立 SQLite named volume，适合单机开发；大量 traces、多用户并发或正式生产环境应迁移到独立 PostgreSQL 数据库。
+8. Phoenix 默认认证关闭，但端口只绑定 `127.0.0.1`。启用局域网或公网访问前必须先配置认证和网络边界。
+9. `PHOENIX_TRACING_ENABLED=true` 会记录提示词、用户输入、工具参数、工具返回和 RAG 上下文。QQ 历史、个人记忆、密钥或其他敏感内容应在进入 trace 前脱敏，或者对相应入口关闭 tracing。
+10. Phoenix 镜像目前使用 `latest` 方便首次安装。验证稳定后应把镜像固定到具体版本或 digest，并在升级前备份 `llm_graph_managed_phoenix_data`。
 
 ## 15. 最小重建检查清单
 
@@ -747,11 +860,12 @@ asyncio.run(
 - [ ] 写入 `.env`、Compose 和两个 init SQL。
 - [ ] 模型 bind mount 已改成新机器的真实路径。
 - [ ] `docker compose up -d` 成功。
+- [ ] Phoenix UI 可通过 `http://127.0.0.1:6006` 打开，数据卷 `llm_graph_managed_phoenix_data` 存在。
 - [ ] PostgreSQL healthy，pgvector 扩展存在。
 - [ ] `rag.document_chunks` 表存在且 embedding 是 `vector(1024)`。
 - [ ] `/v1/models` 可访问。
 - [ ] `/v1/embeddings` 返回 1024 维向量。
 - [ ] LLM-Graph `.env` 中数据库密码与 embedding key 匹配。
 - [ ] README 入库、混合检索和评估命令通过。
+- [ ] 安装 Phoenix Python 依赖，开启 `PHOENIX_TRACING_ENABLED` 后能在 `llm-graph` project 看到一次 Agent trace。
 - [ ] 建立并验证第一份 PostgreSQL 备份。
-

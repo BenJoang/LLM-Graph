@@ -105,7 +105,7 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
                 "content":[
                     {
                     "type":"text",
-                    "text":"如果这张图片中的文字包含'科汇'或者'Sibelius'的任意一个，result为true；不包含上述两者时result为false。"
+                    "text":"如果这张图片中的文字包含'科汇'、'Sibelius'或”鸡你太美“的任意一个，result为true；不包含上述三者时result为false。"
                     }
                 ]
             }

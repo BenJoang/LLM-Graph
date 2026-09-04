@@ -1,5 +1,9 @@
 from contextlib import asynccontextmanager
 
+from src.observability import setup_phoenix_tracing
+
+setup_phoenix_tracing()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

@@ -1,6 +1,6 @@
 ---
 name: ttsskill
-description: "使用局域网 IndexTTS 2.5 服务，以项目内的胡桃参考音频克隆角色音色并生成或播放中文语音。用于用户要求让胡桃说一句话、朗读文本、生成角色语音或播放 TTS；不要用于普通文本回复或其他角色音色。"
+description: "使用局域网 IndexTTS 2.5 服务，以项目内的胡桃参考音频克隆角色音色并生成或播放中英混合语音。用于用户要求让胡桃说一句话、朗读文本、生成角色语音或播放 TTS；不要用于普通文本回复或其他角色音色。"
 ---
 
 # 胡桃语音合成
@@ -24,7 +24,7 @@ description: "使用局域网 IndexTTS 2.5 服务，以项目内的胡桃参考�
 - 用户明确要求既保存又播放时，加 `--play`。
 - 用户指定输出位置时，加 `--output <绝对路径.wav>`；`--output` 本身也代表保存。未指定路径的保存模式写入项目的 `outputs/tts/`。
 - 可用 `--speed 0.25..4.0` 调节语速，用 `--seed <整数>` 固定随机种子。
-- 默认中文；合成其他语言时传 `--language English` 等服务支持的语言值。
+- 默认按中英混合文本处理（IndexTTS 语言代码 `zhen`）。纯中文、英文、日文或粤语可分别传 `--language zh`、`--language en`、`--language ja` 或 `--language yue`；同时兼容 `Chinese`、`English` 等原有写法。
 - 用户明确希望使用最初导入的样本时，可同时传 `--reference-audio <skill_dir>\vo_hutao_teammate_yunjin_01.wav` 和 `--reference-text-file <skill_dir>\vo_hutao_teammate_yunjin_01.lab`。
 - 用户明确希望使用另一段较短的备用样本时，可同时传 `--reference-audio <skill_dir>\assets\hutao-reference.wav` 和 `--reference-text-file <skill_dir>\assets\hutao-reference.txt`。
 
