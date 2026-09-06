@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from src.persistence.checkpoints import open_checkpointer
+from src.persistence.conversation_store import ConversationStore
 
 
 def _text_content(content: Any) -> str:
@@ -47,13 +47,11 @@ def message_to_dto(message: Any) -> dict:
 
 def read_thread_messages(
     thread_id: str,
+    store: ConversationStore,
 ) -> list[dict]:
-    """Read the latest messages from the configured checkpoint backend."""
+    """从 completed conversation_events 读取 GUI 完整历史。"""
 
-    with open_checkpointer() as saver:
-        item = saver.get_tuple({"configurable": {"thread_id": thread_id}})
-
-    if item is None:
-        return []
-    values = item.checkpoint.get("channel_values", {})
-    return [message_to_dto(message) for message in values.get("messages", [])]
+    return [
+        message_to_dto(message)
+        for message in store.load_messages(thread_id)
+    ]

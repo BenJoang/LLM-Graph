@@ -15,7 +15,7 @@ from src.observability import setup_phoenix_tracing
 setup_phoenix_tracing()
 
 from src.client.mymodel_client import serialize_message
-from src.graphs.tool_agent_graph import arun_tool_agent
+from src.services.tool_agent_runner import get_default_tool_agent_runner
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--thread-id",
-        help="会话 ID；传入已有 ID 可从 checkpoint 继续对话",
+        help="长期会话 ID；传入已有 ID 可从 SQL 对话日志继续对话",
     )
     parser.add_argument(
         "--profile",
@@ -121,6 +121,8 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
+    runner = get_default_tool_agent_runner()
+    await runner.setup()
     thread_id = args.thread_id or make_thread_id()
     latest_result: dict[str, Any] | None = None
 
@@ -165,9 +167,9 @@ async def main() -> None:
             continue
 
         try:
-            latest_result = await arun_tool_agent(
+            latest_result = await runner.run(
                 question=question,
-                thread_id=thread_id,
+                session_id=thread_id,
                 profile_name=args.profile,
                 vision_profile_name=args.vision_profile,
                 recursion_limit=args.recursion_limit,
@@ -178,6 +180,8 @@ async def main() -> None:
         except Exception as error:
             logging.exception("Agent 调用失败")
             print(f"\nAgent 调用失败：{type(error).__name__}: {error}")
+
+    await runner.close()
 
 
 if __name__ == "__main__":

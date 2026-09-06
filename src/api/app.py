@@ -10,15 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes.chat import router as chat_router
 from src.api.routes.gui import router as gui_router, run_manager
 from src.api.routes.health import router as health_router
-from src.api.routes.tool_agent import router as tool_agent_router
-from src.persistence.checkpoints import setup_checkpoint_backend
+from src.api.routes.tool_agent import (
+    router as tool_agent_router,
+    tool_agent_runner,
+)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    await setup_checkpoint_backend()
-    yield
-    await run_manager.shutdown()
+    await tool_agent_runner.setup()
+    try:
+        yield
+    finally:
+        await run_manager.shutdown()
+        await tool_agent_runner.close()
 
 
 app = FastAPI(title="Local LLM API", lifespan=lifespan)

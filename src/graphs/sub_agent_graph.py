@@ -15,7 +15,7 @@ from src.context.context_compression import (
     CompressionSession,
 )
 
-from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
+from src.client.mymodel_client import build_chat_model, load_profile, load_prompt
 from src.tools import registry
 from src.context.message_context import(
     make_initial_state,
@@ -161,21 +161,6 @@ def build_graph(
         else:
             status = "completed"
             stop_reason = ""
-
-        save_langchain_message_md(
-            response,
-            question=state["messages"][0].content,
-            messages=messages,
-            tools=tools,
-            request_options={
-                "model": profile["model"],
-                "temperature": llm.temperature,
-                "base_url": profile["base_url"],
-                "remaining_steps": remaining_steps,
-                "status": status,
-            },
-            filename="subagent_steps.md",
-        )
 
         return {
             "messages": [response],

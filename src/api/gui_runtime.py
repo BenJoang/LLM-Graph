@@ -3,15 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
 from src.api.gui_messages import message_to_dto
-from src.api.graph_entrypoints import resolve_graph_entrypoint
 from src.api.gui_store import GuiStore, SessionRecord
+from src.services.tool_agent_runner import (
+    ToolAgentRunner,
+    get_default_tool_agent_runner,
+)
 
 
 RUN_TIMEOUT_SECONDS: float | None = None
@@ -23,19 +26,6 @@ class RunConflictError(RuntimeError):
 
 class SessionNotFoundError(RuntimeError):
     pass
-
-
-AgentStreamFactory = Callable[..., AsyncIterator[dict]]
-
-
-async def _default_agent_stream(
-    *,
-    graph_entrypoint: str,
-    **kwargs,
-) -> AsyncIterator[dict]:
-    stream_agent = resolve_graph_entrypoint(graph_entrypoint)
-    async for update in stream_agent(**kwargs):
-        yield update
 
 
 @dataclass
@@ -71,11 +61,11 @@ class RunManager:
         self,
         store: GuiStore,
         *,
-        stream_agent: AgentStreamFactory | None = None,
+        runner: ToolAgentRunner | None = None,
         run_timeout_seconds: float | None = RUN_TIMEOUT_SECONDS,
     ) -> None:
         self.store = store
-        self._stream_agent = stream_agent
+        self.runner = runner or get_default_tool_agent_runner()
         self._run_timeout_seconds = run_timeout_seconds
         self._lock = asyncio.Lock()
         self._active: dict[str, RunHandle] = {}
@@ -208,21 +198,22 @@ class RunManager:
                 session.id,
                 question,
             )
-            stream_agent = self._stream_agent or _default_agent_stream
-            stream_kwargs = {
-                "question": question,
-                "thread_id": session.id,
-                "profile_name": session.profile_name,
-                "vision_profile_name": session.vision_profile_name,
-                "recursion_limit": session.recursion_limit,
-                "working_dir": session.working_dir,
-                "context_window_tokens": session.context_window_tokens,
-            }
-            if self._stream_agent is None:
-                stream_kwargs["graph_entrypoint"] = session.graph_entrypoint
-            async with asyncio.timeout(self._run_timeout_seconds):
-                async for update in stream_agent(**stream_kwargs):
-                    self._emit_update(handle, update, calls)
+            async def on_update(update: dict) -> None:
+                self._emit_update(handle, update, calls)
+
+            await self.runner.execute(
+                question=question,
+                session_id=session.id,
+                run_id=handle.run_id,
+                profile_name=session.profile_name,
+                vision_profile_name=session.vision_profile_name,
+                recursion_limit=session.recursion_limit,
+                working_dir=session.working_dir,
+                context_window_tokens=session.context_window_tokens,
+                graph_entrypoint=session.graph_entrypoint,
+                on_update=on_update,
+                timeout_seconds=self._run_timeout_seconds,
+            )
 
             handle.status = "completed"
             record = await asyncio.to_thread(

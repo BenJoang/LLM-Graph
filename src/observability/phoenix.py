@@ -38,6 +38,10 @@ def setup_phoenix_tracing() -> bool:
     project_name = os.getenv("PHOENIX_PROJECT_NAME", "llm-graph").strip()
     register(
         project_name=project_name or "llm-graph",
+        # Keep batch uploads off gRPC: large graph states can exceed its
+        # collector request limit and cause an entire batch of spans to be lost.
+        # Phoenix derives /v1/traces from PHOENIX_COLLECTOR_ENDPOINT for HTTP.
+        protocol="http/protobuf",
         auto_instrument=True,
         batch=True,
         verbose=False,
@@ -45,7 +49,7 @@ def setup_phoenix_tracing() -> bool:
 
     _INITIALIZED = True
     logging.getLogger(__name__).info(
-        "Phoenix tracing 已启用：project=%s endpoint=%s",
+        "Phoenix tracing 已启用：project=%s collector=%s protocol=http/protobuf",
         project_name or "llm-graph",
         os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://127.0.0.1:6006"),
     )

@@ -9,7 +9,6 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
-from src.client.mymodel_client import save_graph_mdv2
 from src.tools import registry
 
 
@@ -69,13 +68,6 @@ def updater_node(state: MemoryUpdateState) -> dict:
     ]
 
     response = llm_with_tools.invoke(messages)
-
-    save_graph_mdv2(
-        event_type="model",
-        node_name="memory_updater",
-        response=response,
-        filename=UPDATE_LOG_FILE,
-    )
     return {
         "messages": [response],
     }
@@ -93,12 +85,6 @@ def route_updater(
 def run_memory_tools_node(state: MemoryUpdateState) -> dict:
     update = tool_node.invoke(state)
 
-    save_graph_mdv2(
-        event_type="tools",
-        node_name="memory_tools",
-        tool_messages=update.get("messages", []),
-        filename=UPDATE_LOG_FILE,
-    )
 
     return update
 
@@ -131,23 +117,8 @@ def run_qq_memory_update(
     batch_records: str,
     recursion_limit: int = 30,
 ):
-    
-    save_graph_mdv2(
-        event_type="run_start",
-        node_name="memory_update_start",
-        group_id=group_id,
-        question="更新QQ群长期记忆",
-        part_history=batch_records,
-        filename=UPDATE_LOG_FILE,
-    )
 
     result = graph.invoke(
         make_initial_state(group_id, batch_records),
         config={"recursion_limit": recursion_limit},
-    )
-
-    save_graph_mdv2(
-        event_type="run_end",
-        node_name="memory_update_end",
-        filename=UPDATE_LOG_FILE,
     )

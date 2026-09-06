@@ -77,6 +77,24 @@ class MessageManage:
 
         self.cutoff = 2
 
+    def project_committed_context(
+        self,
+        messages: list,
+        compression_session: CompressionSession | None = None,
+    ) -> tuple[list, CompressionSession]:
+        """只应用已经提交的压缩计划，生成可持久化的模型投影。
+
+        这里不会裁剪工具输出，也不会调用摘要模型或创建新的压缩
+        commit，因此事实消息仍只保存在 conversation_events 中。
+        """
+
+        session = load_compression_session(compression_session)
+        projected = self._apply_context_collapse(
+            deepcopy(messages),
+            session,
+        )
+        return projected, dump_compression_session(session)
+
     def prepare_messages_for_query(self, messages: list, compression_session: CompressionSession | None = None) -> tuple[list, bool, CompressionSession]:
         compressed = False
         current_tokens = self.estimate_tokens(messages)

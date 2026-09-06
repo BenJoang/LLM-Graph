@@ -65,9 +65,8 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe tool_agent_chat.py
 ```
 
-脚本会为每次新对话生成一个 `thread_id`。默认情况下，对话 checkpoint 保存在
-`outputs/checkpoints/tool_agent.sqlite`。之后使用相同的 checkpoint 后端并传入同一个
-ID，即可继续原来的对话：
+脚本会为每次新对话生成一个 `thread_id`（兼容字段，实际作为 `session_id`）。对话消息
+永久追加到 SQL 业务表。之后连接同一业务库并传入同一个 ID，即可继续原来的对话：
 
 ```powershell
 .\.venv\Scripts\python.exe tool_agent_chat.py --thread-id cli-20260817-120000-abcd1234
@@ -96,33 +95,25 @@ ID，即可继续原来的对话：
 .\.venv\Scripts\python.exe tool_agent_chat.py --help
 ```
 
-### Checkpoint 存储后端
+### 对话存储后端
 
-项目默认使用 SQLite，不需要额外启动数据库。`.env.example` 中的默认配置为：
-
-```dotenv
-LLM_GRAPH_CHECKPOINT_BACKEND=sqlite
-LLM_GRAPH_CHECKPOINT_SQLITE_PATH=outputs/checkpoints/tool_agent.sqlite
-```
-
-如果需要让 CLI、API 和 GUI 共用 PostgreSQL checkpoint，可以启动 PostgreSQL 后在
-个人 `.env` 中配置：
+普通 CLI、API 和 GUI 运行不再使用 LangGraph 持久 checkpointer。通过
+`LLM_GRAPH_DATABASE_URL` 选择 SQLite 或 PostgreSQL：
 
 ```dotenv
-LLM_GRAPH_CHECKPOINT_BACKEND=postgres
-LLM_GRAPH_CHECKPOINT_POSTGRES_URL=postgresql://llm_graph:<password>@127.0.0.1:5433/llm_graph?sslmode=disable
+# 本地 SQLite
+LLM_GRAPH_DATABASE_URL=sqlite:///outputs/conversations/conversation.sqlite3
+
+# 或 PostgreSQL
+LLM_GRAPH_DATABASE_URL=postgresql://llm_graph:<password>@127.0.0.1:5433/llm_graph?sslmode=disable
 ```
 
-不要把包含真实密码的 `.env` 提交到仓库。通过 GUI 启动 FastAPI 时，应用会自动执行
-LangGraph checkpoint 数据表的初始化和升级。如果只使用命令行，第一次连接该数据库前
-可以手动执行一次：
+不配置时会兼容旧环境选择数据库，但 SQLite 始终使用独立的 conversation 文件。
+`conversation_events` 是唯一永久对话事实；失败、取消和中断的消息保留用于审计，
+但不会进入后续模型上下文。旧 checkpoint 仅供迁移和回滚，迁移命令见
+[`docs/BACKEND_CHECKPOINT_CONVERSATION_LOG_MIGRATION.md`](docs/BACKEND_CHECKPOINT_CONVERSATION_LOG_MIGRATION.md)。
 
-```powershell
-.\.venv\Scripts\python.exe -c "import asyncio; from src.persistence.checkpoints import setup_checkpoint_backend; asyncio.run(setup_checkpoint_backend())"
-```
-
-SQLite 和 PostgreSQL 中的旧会话不会自动互相迁移。切换后端后，只有目标后端中已经存在
-的 `thread_id` 才能恢复；如需查看原来的 SQLite 会话，应切回 SQLite 或单独执行数据迁移。
+不要把包含真实密码的 `.env` 提交到仓库。
 
 ## Windows GUI 工作台
 
@@ -151,23 +142,17 @@ $env:LLM_GRAPH_PYTHON = "E:\other-project\.venv\Scripts\python.exe"
 .\start_gui.ps1
 ```
 
-GUI 会话标题、模型和工作目录等元数据始终保存在 `outputs/gui_state.sqlite`。消息
-checkpoint 默认保存在 `outputs/checkpoints/tool_agent.sqlite`；当
-`LLM_GRAPH_CHECKPOINT_BACKEND=postgres` 时，消息和 graph state 改为保存在配置的
-PostgreSQL 数据库中。模型地址、数据库连接和密钥继续由 `.env` 与
+GUI 会话标题、模型和工作目录等元数据始终保存在 `outputs/gui_state.sqlite`。消息、
+Run 状态和模型上下文投影保存在 `LLM_GRAPH_DATABASE_URL` 指向的业务库。模型地址、
+数据库连接和密钥继续由 `.env` 与
 `config/user_config.json` 管理，不会写入浏览器存储。
 
-每个空会话都可以在页头填写自己的 Graph 入口，格式为
-`src.graphs.<模块>:<异步函数>`。入口必须是异步生成器，并接受 GUI 通用参数
-`question`、`thread_id`、`profile_name`、`vision_profile_name`、
-`recursion_limit`、`working_dir` 和 `context_window_tokens`；输出结构与
-`tool_agent_graph.astream_tool_agent` 一致。最简单的扩展方式是复制
-`src/graphs/tool_agent_graph.py` 后修改工作流，同时保留对应的流式入口函数。
-已有消息的会话会锁定 Graph，避免不同状态结构共用同一个 checkpoint。
+每个空会话可以选择受管 Graph。目前注册了 Tool Agent 和 TTS，两者都通过统一 SQL
+协调器以 `checkpointer=None` 执行。新增 Graph 时需要先加入受管注册表，不能直接填写
+任意导入路径绕过 SQL。已有消息的会话会锁定 Graph。
 
 不同 GUI 会话可以同时运行，但同一个会话一次只允许一个任务。关闭 GUI 会取消仍在
-运行的任务。永久删除会同时清除会话元数据与当前 checkpoint 后端中的完整 thread，
-且不可恢复。
+运行的任务。永久删除会先清除业务会话及事件，再删除 GUI 元数据，重复调用保持幂等。
 
 ## 开发计划
 
@@ -180,7 +165,7 @@ PostgreSQL 数据库中。模型地址、数据库连接和密钥继续由 `.env
 - [x] tool_agent_graph需要可以指定路径，然后能够自动拼接某.md文件到系统提示词中
 - [x] 用subprocess写python脚本执行功能
 - [x] 使用飞书机器人对接现在使用的平台，完成相关任务（目前使用3.6 27B完成功能）
-- [x] 增加多轮对话和支持中断以及断点续接功能（支持多轮对话之后它的checkpoints默认能实现了，不过可能跟普遍理解的断点续接不一样）
+- [x] 使用 SQL 对话事实源支持多轮对话；本地单实例启动时将遗留运行标记为 interrupted
 - [x] 两层上下文机制触发仍超限时，构建三次重试，每次使用更强硬的自动压缩方法
 - [x] ~~增加OCR功能~~(用qwen多模态模型就行了)，~~RAG改成用skill读取内容~~。~~然后看看能不能用3.5的小模型正常完成功能~~。
 - [ ] ~~支持skill载入~~和网上skill的使用

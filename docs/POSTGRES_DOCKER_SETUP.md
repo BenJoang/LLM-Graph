@@ -13,7 +13,8 @@ Windows / LLM-Graph
 ├─ PostgreSQL: 127.0.0.1:5434
 │  ├─ PostgreSQL 16
 │  ├─ pgvector
-│  ├─ LangGraph checkpoint 表（启用 PostgreSQL checkpoint 时）
+│  ├─ SQL 对话事实表（conversation_*）
+│  ├─ 旧 LangGraph checkpoint 表（仅迁移与回滚）
 │  └─ rag.document_chunks（RAG 文档块和 1024 维向量）
 ├─ Qwen3 Embedding: 127.0.0.1:8001
 │  └─ OpenAI-compatible /v1/embeddings
@@ -587,6 +588,8 @@ PHOENIX_PROJECT_NAME=llm-graph
 
 Phoenix tracing 需要项目 Python 环境安装：
 
+> 2026-09-05 更新：追踪已明确使用 HTTP/protobuf 批量上报，修复大请求触发本地 gRPC 4 MiB 限制而丢失部分记录的问题。另一台电脑的同步步骤、独立 NoneBot 接入及完整性验收见 [Phoenix 工具记录缺失修复](PHOENIX_TRACING_FIX.md)。
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-LLMv1.txt
 ```
@@ -611,21 +614,20 @@ Set-Location "E:\Code Program\LLM-Graph"
 
 完成一次普通对话后，在 `http://127.0.0.1:6006` 的 Traces 页面选择 `llm-graph` project，应当能看到 LangGraph、ChatOpenAI 和工具调用 spans。Phoenix 只负责记录和评估，不代理模型请求；本地 Qwen 和 DeepSeek 的原有连接方式保持不变。
 
-项目的 LangGraph checkpoint 和 RAG 可以使用同一个 PostgreSQL 实例，也可以分开。当前默认 checkpoint 仍是 SQLite：
+普通 Agent 运行使用 SQL 对话事实表，不再写 LangGraph checkpoint。对话库和 RAG
+可以使用同一个 PostgreSQL 实例，也可以分开：
 
 ```dotenv
-LLM_GRAPH_CHECKPOINT_BACKEND=sqlite
-LLM_GRAPH_CHECKPOINT_SQLITE_PATH=outputs/checkpoints/tool_agent.sqlite
+LLM_GRAPH_DATABASE_URL=postgresql://llm_graph:<密码>@127.0.0.1:5434/llm_graph?sslmode=disable
 ```
 
-如果要让 checkpoint 也进入当前 PostgreSQL：
+本地无需 PostgreSQL 时也可以使用独立 SQLite：
 
 ```dotenv
-LLM_GRAPH_CHECKPOINT_BACKEND=postgres
-LLM_GRAPH_CHECKPOINT_POSTGRES_URL=postgresql://llm_graph:<密码>@127.0.0.1:5434/llm_graph?sslmode=disable
+LLM_GRAPH_DATABASE_URL=sqlite:///outputs/conversations/conversation.sqlite3
 ```
 
-首次切换后需要执行项目提供的 checkpoint 初始化流程。
+旧 `LLM_GRAPH_CHECKPOINT_*` 配置仅用于显式历史迁移与回滚读取，不属于应用启动流程。
 
 ## 10. 项目端到端验证
 

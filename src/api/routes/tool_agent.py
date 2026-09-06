@@ -5,17 +5,21 @@ from uuid import uuid4
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from src.graphs.tool_agent_graph import arun_tool_agent
 from src.graphs.wuxiagent import run_tool_agent as wuxi_agent
+from src.services.tool_agent_runner import get_default_tool_agent_runner
 from skills.wuxiwaterskill.src.server.check_latest_discharge_warning import (
     check_latest_discharge_warning,
 )
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
+tool_agent_runner = get_default_tool_agent_runner()
 
 class ToolAgentRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
-    thread_id: str = Field(default_factory=lambda: f"api-{uuid4().hex}")
+    thread_id: str = Field(
+        default_factory=lambda: f"api-{uuid4().hex}",
+        description="长期会话 ID；字段名为兼容旧 API 暂时保留",
+    )
     profile_name: str = "qwen3.5-4b"
     # Imageread 识图模型
     vision_profile_name: str = "qwen3-vl"
@@ -44,9 +48,9 @@ def extract_answer(result: Any) -> str:
 
 @router.post("/tool")
 async def tool_agent(request: ToolAgentRequest) -> dict:
-    result = await arun_tool_agent(
+    result = await tool_agent_runner.run(
         question=request.question,
-        thread_id=request.thread_id,
+        session_id=request.thread_id,
         profile_name=request.profile_name,
         vision_profile_name=request.vision_profile_name,
         recursion_limit=request.recursion_limit,

@@ -2,7 +2,6 @@ from typing import Annotated
 from typing_extensions import TypedDict, NotRequired
 import logging
 
-from src.persistence.checkpoints import open_async_checkpointer
 from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
@@ -12,12 +11,10 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import tools_condition
 
-from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
+from src.client.mymodel_client import build_chat_model, load_profile, load_prompt
 from src.tools import registry
 
 from src.context.message_context import(
-    get_next_turn_id,
-    make_initial_state,
     build_turn_aware_tool_node,
 )
 from src.context.context_compression import MessageManage, CompressionSession
@@ -133,19 +130,6 @@ def build_graph(
         #response = 
         logging.info(response)
         #print(response.content)
-
-        save_langchain_message_md(
-            response,
-            question=state["messages"][0].content,
-            messages=messages,
-            tools=tools,
-            request_options={
-                "model": profile["model"],
-                "temperature": llm.temperature,
-                "base_url": profile["base_url"],
-            },
-            filename="new_tool_agent_steps.md",
-        )
         return {
             "messages": [response],
             "compression_session": (
@@ -183,36 +167,23 @@ async def astream_tool_agent(
     working_dir: str | None,
     context_window_tokens: int,
 ):
-    async with open_async_checkpointer() as checkpointer:
-        graph = build_graph(
-            profile_name=profile_name,
-            vision_profile_name=vision_profile_name,
-            working_dir=working_dir,
-            checkpointer=checkpointer,
-            context_window_tokens=context_window_tokens,
-        )
+    from src.services.tool_agent_runner import (
+        TOOL_AGENT_ENTRYPOINT,
+        get_default_tool_agent_runner,
+    )
 
-        config = {
-            "configurable": {
-                "thread_id": thread_id,
-            },
-            "recursion_limit": recursion_limit,
-        }
-
-        snapshot = await graph.aget_state(config)
-        old_messages = (
-            snapshot.values.get("messages", [])
-            if snapshot.values
-            else []
-        )
-        turn_id = get_next_turn_id(old_messages)
-
-        async for update in graph.astream(
-            make_initial_state(question, turn_id=turn_id),
-            config=config,
-            stream_mode="updates",
-        ):
-            yield update
+    runner = get_default_tool_agent_runner()
+    async for update in runner.astream(
+        question=question,
+        session_id=thread_id,
+        profile_name=profile_name,
+        vision_profile_name=vision_profile_name,
+        recursion_limit=recursion_limit,
+        working_dir=working_dir,
+        context_window_tokens=context_window_tokens,
+        graph_entrypoint=TOOL_AGENT_ENTRYPOINT,
+    ):
+        yield update
 
 async def arun_tool_agent(
     question: str,
@@ -223,29 +194,18 @@ async def arun_tool_agent(
     working_dir: str | None = None,
     context_window_tokens: int = 32768,
 ):
-    async with open_async_checkpointer() as checkpointer:
-        graph = build_graph(
-            profile_name=profile_name,
-            vision_profile_name=vision_profile_name,
-            working_dir=working_dir,
-            checkpointer=checkpointer,
-            context_window_tokens=context_window_tokens,
-        )
+    from src.services.tool_agent_runner import (
+        TOOL_AGENT_ENTRYPOINT,
+        get_default_tool_agent_runner,
+    )
 
-        config = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": recursion_limit,
-        }
-
-        snapshot = await graph.aget_state(config)
-        old_messages = (
-            snapshot.values.get("messages", [])
-            if snapshot.values
-            else []
-        )
-        turn_id = get_next_turn_id(old_messages)
-
-        return await graph.ainvoke(
-            make_initial_state(question, turn_id=turn_id),
-            config=config,
-        )
+    return await get_default_tool_agent_runner().run(
+        question=question,
+        session_id=thread_id,
+        profile_name=profile_name,
+        vision_profile_name=vision_profile_name,
+        recursion_limit=recursion_limit,
+        working_dir=working_dir,
+        context_window_tokens=context_window_tokens,
+        graph_entrypoint=TOOL_AGENT_ENTRYPOINT,
+    )

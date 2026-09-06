@@ -619,38 +619,6 @@ def save_stream_json(
     append_record(record, filename)
 
 
-
-def chat_once_thinking(client: OpenAI, profile: dict, prompt: dict, question: str) -> str:
-    request_data = {
-        "model": profile["model"],
-        "messages": [
-            {"role": "system", "content": prompt["system"]},
-            {"role": "user", "content": question},
-        ],
-        "temperature": 0.2,
-    }
-    response = client.chat.completions.create(**request_data)
-    save_response_json(response, question, request_data)
-    return response.choices[0].message.content
-
-def chat_once_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.0) -> str:
-    request_data = {
-        "model": profile["model"],
-        "messages": [
-            {"role": "system", "content": prompt["system"]},
-            {"role": "user", "content": question},
-        ],
-        "extra_body":{
-            "chat_template_kwargs":{
-                "enable_thinking":False
-                } 
-            },
-        "temperature": temperature,
-    }
-    response = client.chat.completions.create(**request_data)
-    save_response_json(response, question, request_data)
-    return response.choices[0].message.content
-
 async def chat_once_nothinking_async(
     client: AsyncOpenAI,
     profile: dict,
@@ -690,42 +658,3 @@ async def chat_once_nothinking_async(
 
     return response.choices[0].message.content or ""
 
-
-def chat_stream_nothinking(client: OpenAI, profile: dict, prompt: dict, question: str, temperature: float = 1.0):
-    request_data = {
-        "model": profile["model"],
-        "messages": [
-            {"role": "system", "content": prompt["system"]},
-            {"role": "user", "content": question},
-        ],
-        "extra_body":{
-            "chat_template_kwargs":{
-                "enable_thinking":False
-                } 
-            },
-        "temperature": temperature,
-        "stream_options": {"include_usage": True},
-        "stream": True,
-    }
-    response = client.chat.completions.create(**request_data)
-    content_parts = []
-    usage = None
-
-    for chunk in response:
-        if chunk.choices:
-            content = chunk.choices[0].delta.content or ""
-            print(content, end="", flush=True)
-            content_parts.append(content)
-        elif chunk.usage:
-            usage = chunk.usage.model_dump()
-
-    full_response = "".join(content_parts)
-
-    save_stream_json(
-        question=question,
-        content=full_response,
-        usage=usage,
-        request_data=request_data
-    )
-
-    return full_response

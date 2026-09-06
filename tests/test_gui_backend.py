@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.graph import END, START, MessagesState, StateGraph
 
 from src.api.gui_messages import message_to_dto, read_thread_messages
 from src.api.graph_entrypoints import (
@@ -20,12 +19,12 @@ from src.api.gui_runtime import RunConflictError, RunManager
 from src.api.gui_store import GuiStore, load_safe_profiles
 from src.persistence.checkpoints import (
     checkpoint_backend,
-    open_checkpointer,
-    delete_checkpoint_thread,
     postgres_url,
     setup_checkpoint_backend,
     sqlite_path,
 )
+from src.persistence.conversation_store import create_conversation_store
+from src.services.tool_agent_runner import ToolAgentRunner
 
 
 class GuiStoreTests(unittest.TestCase):
@@ -109,7 +108,7 @@ class GuiStoreTests(unittest.TestCase):
         )
         with self.assertRaises(GraphEntrypointError):
             validate_graph_entrypoint("os:path")
-        with self.assertRaisesRegex(GraphEntrypointError, "异步生成器"):
+        with self.assertRaisesRegex(GraphEntrypointError, "未注册"):
             validate_graph_entrypoint("src.graphs.tool_agent_graph:build_graph")
 
     def test_profiles_are_safe(self):
@@ -177,67 +176,58 @@ class CheckpointSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "sqlite 或 postgres"):
                 checkpoint_backend()
 
-    def test_gui_reads_messages_from_configured_sqlite_backend(self):
+    def test_gui_reads_only_completed_messages_from_business_store(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_file = Path(temp_dir) / "checkpoints.sqlite"
-            environment = {
-                "LLM_GRAPH_CHECKPOINT_BACKEND": "sqlite",
-                "LLM_GRAPH_CHECKPOINT_SQLITE_PATH": str(checkpoint_file),
-            }
-
-            builder = StateGraph(MessagesState)
-            builder.add_node(
-                "assistant",
-                lambda _state: {"messages": [AIMessage(content="你好")]},
+            database = Path(temp_dir) / "conversation.sqlite"
+            store = create_conversation_store(
+                "sqlite:///" + database.as_posix()
             )
-            builder.add_edge(START, "assistant")
-            builder.add_edge("assistant", END)
-
-            with patch.dict(os.environ, environment, clear=True):
-                with open_checkpointer() as saver:
-                    graph = builder.compile(checkpointer=saver)
-                    graph.invoke(
-                        {"messages": [HumanMessage(content="测试")]},
-                        {"configurable": {"thread_id": "gui-test"}},
-                    )
-
-                messages = read_thread_messages("gui-test")
+            store.setup()
+            run = store.begin_run("gui-test")
+            store.append_message(
+                run.run_id,
+                HumanMessage(content="测试", id="gui-human"),
+            )
+            store.append_message(
+                run.run_id,
+                AIMessage(content="你好", id="gui-ai"),
+            )
+            store.complete_run(run.run_id)
+            messages = read_thread_messages("gui-test", store)
 
         self.assertEqual(
             [message["content"] for message in messages],
             ["测试", "你好"],
         )
 
-    def test_delete_checkpoint_thread_removes_sqlite_history(self):
+    def test_delete_business_session_removes_sql_history(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_file = Path(temp_dir) / "checkpoints.sqlite"
-            environment = {
-                "LLM_GRAPH_CHECKPOINT_BACKEND": "sqlite",
-                "LLM_GRAPH_CHECKPOINT_SQLITE_PATH": str(checkpoint_file),
-            }
-            builder = StateGraph(MessagesState)
-            builder.add_node(
-                "assistant",
-                lambda _state: {"messages": [AIMessage(content="完成")]},
+            database = Path(temp_dir) / "conversation.sqlite"
+            store = create_conversation_store(
+                "sqlite:///" + database.as_posix()
             )
-            builder.add_edge(START, "assistant")
-            builder.add_edge("assistant", END)
-            with patch.dict(os.environ, environment, clear=True):
-                with open_checkpointer() as saver:
-                    graph = builder.compile(checkpointer=saver)
-                    graph.invoke(
-                        {"messages": [HumanMessage(content="删除我")]},
-                        {"configurable": {"thread_id": "delete-test"}},
-                    )
-                self.assertTrue(read_thread_messages("delete-test"))
-                delete_checkpoint_thread("delete-test")
-                self.assertEqual(read_thread_messages("delete-test"), [])
+            store.setup()
+            run = store.begin_run("delete-test")
+            store.append_message(
+                run.run_id,
+                HumanMessage(content="删除我", id="delete-human"),
+            )
+            store.complete_run(run.run_id)
+            self.assertTrue(read_thread_messages("delete-test", store))
+            self.assertTrue(store.delete_session("delete-test"))
+            self.assertEqual(read_thread_messages("delete-test", store), [])
 
 
 class RunManagerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.store = GuiStore(Path(self.temp_dir.name) / "gui.sqlite")
+        self.conversation_store = create_conversation_store(
+            "sqlite:///" + (
+                Path(self.temp_dir.name) / "conversation.sqlite"
+            ).as_posix()
+        )
+        self.conversation_store.setup()
         self.session = self.store.create_session(
             profile_name="deepseekv4-flash",
             vision_profile_name="qwen3.8",
@@ -247,7 +237,15 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def tearDown(self):
+        self.conversation_store.close()
         self.temp_dir.cleanup()
+
+    def make_manager(self, graph_stream):
+        runner = ToolAgentRunner(
+            store=self.conversation_store,
+            graph_stream=graph_stream,
+        )
+        return RunManager(self.store, runner=runner)
 
     async def test_run_emits_ordered_tool_events(self):
         async def fake_stream(**_kwargs):
@@ -266,7 +264,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
             }
             yield {"assistant": {"messages": [AIMessage(content="完成")]}}
 
-        manager = RunManager(self.store, stream_agent=fake_stream)
+        manager = self.make_manager(fake_stream)
         handle = await manager.start(self.session.id, "搜索 x")
         events = []
         while True:
@@ -293,13 +291,13 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         started: set[str] = set()
 
         async def blocking_stream(**kwargs):
-            started.add(kwargs["thread_id"])
+            started.add(kwargs["initial_state"]["messages"][-1].content)
             if len(started) == 2:
                 entered.set()
             await release.wait()
             yield {"assistant": {"messages": [AIMessage(content="完成")]}}
 
-        manager = RunManager(self.store, stream_agent=blocking_stream)
+        manager = self.make_manager(blocking_stream)
         second = self.store.create_session(
             profile_name="deepseekv4-flash",
             vision_profile_name="qwen3.8",
@@ -336,7 +334,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
             captured.update(kwargs)
             yield {"assistant": {"messages": [AIMessage(content="完成")]}}
 
-        manager = RunManager(self.store, stream_agent=fake_stream)
+        manager = self.make_manager(fake_stream)
         handle = await manager.start(configured.id, "继续")
         await asyncio.wait_for(handle.finished_event.wait(), timeout=2)
 
@@ -351,7 +349,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
             yield {}
 
-        manager = RunManager(self.store, stream_agent=blocking_stream)
+        manager = self.make_manager(blocking_stream)
         handle = await manager.start(self.session.id, "等待")
         await asyncio.wait_for(entered.wait(), timeout=1)
         with self.assertRaises(RunConflictError):

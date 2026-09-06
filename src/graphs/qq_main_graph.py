@@ -20,7 +20,6 @@ from src.context.context_compression import (
 
 from src.client.mymodel_client import build_chat_model, load_profile, load_prompt
 from src.context.context_builder import build_system_context
-from src.client.mymodel_client import save_graph_mdv2
 from src.tools import registry
 
 import json
@@ -206,12 +205,6 @@ def build_graph(profile_name: str = "qwen3.6",
             max_context_retries=3,
         )
         
-        save_graph_mdv2(
-            event_type="model",
-            node_name="history",
-            response=response,
-            filename="qq_main_graph_steps1.md",
-        )
 
         return {
             "history_messages": [response],
@@ -237,13 +230,6 @@ def build_graph(profile_name: str = "qwen3.6",
 
         response = await image_node_llm.ainvoke(messages)
 
-        save_graph_mdv2(
-            event_type="model",
-            node_name="image",
-            response=response,
-            filename="qq_main_graph_steps1.md",
-        )
-
         return {
             "image_messages": [response]
         }
@@ -267,12 +253,6 @@ def build_graph(profile_name: str = "qwen3.6",
             messages.append({"role": "user", "content": f"图片识别结果:{last_image_content}"})
 
         response = await chat_llm.ainvoke(messages)
-        save_graph_mdv2(
-                    event_type="model",
-                    node_name="answer",
-                    response=response,
-                    filename="qq_main_graph_steps1.md",
-                )
 
         return {
             "messages": [response]
@@ -332,14 +312,6 @@ async def run_qq_main_agent(
         context_window_tokens=context_window_tokens,
     )
 
-    save_graph_mdv2(
-        event_type="run_start",
-        node_name="start",
-        group_id=group_id,
-        question=question,
-        filename="qq_main_graph_steps1.md",
-    )
-
     try:
         async with asyncio.timeout(run_timeout):
             result = await graph.ainvoke(
@@ -363,12 +335,6 @@ async def run_qq_main_agent(
             run_timeout,
         )
         raise
-
-    save_graph_mdv2(
-        event_type="run_end",
-        node_name="end",
-        filename="qq_main_graph_steps1.md",
-    )
 
     final_message = result["messages"][-1]
     content = final_message.content or ""

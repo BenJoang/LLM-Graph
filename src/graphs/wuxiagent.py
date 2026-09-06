@@ -16,7 +16,7 @@ from src.context.context_compression import (
     CompressionSession,
 )
 
-from src.client.mymodel_client import build_chat_model, load_profile, load_prompt, save_langchain_message_md
+from src.client.mymodel_client import build_chat_model, load_profile, load_prompt
 from src.tools import registry
 
 from src.context.context_compression import MessageManage
@@ -121,19 +121,6 @@ def build_graph(
             compress_fn=retry_adapter,
             turn_id=state["turn_id"],
             max_context_retries=3,
-        )
-
-        save_langchain_message_md(
-            response,
-            question=state["messages"][0].content,
-            messages=messages,
-            tools=tools,
-            request_options={
-                "model": profile["model"],
-                "temperature": llm.temperature,
-                "base_url": profile["base_url"],
-            },
-            filename="new_tool_agent_steps.md",
         )
         return {
             "messages": [response],

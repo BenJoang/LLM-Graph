@@ -11,7 +11,6 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from typing_extensions import NotRequired, TypedDict
-from src.client.mymodel_client import save_graph_mdv2
 
 from src.client.mymodel_client import (
     build_chat_model,
@@ -83,12 +82,6 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
             }
         ]
         response = await vlllm.ainvoke(raw_messages)
-        save_graph_mdv2(
-            event_type="model",
-            node_name="vl",
-            response=response,
-            filename="qq_vl_graph_steps1.md",
-        )
 
         return {
             "vlmessages": [response]
@@ -114,13 +107,6 @@ def build_graph(url: str, text:str, profile_name: str = "deepseekv4-flash",visio
         output = await structured_review_llm.ainvoke(raw_messages)
         parsed = output["parsed"]
         raw_response = output["raw"]
-
-        save_graph_mdv2(
-        event_type="model",
-        node_name="review",
-        response=raw_response,
-        filename="qq_vl_graph_steps1.md",
-        )
 
         return {
             "llmmessages": [raw_response],

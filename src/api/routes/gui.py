@@ -20,7 +20,7 @@ from src.api.gui_runtime import (
     SessionNotFoundError,
 )
 from src.api.gui_store import PROJECT_ROOT, GuiStore, load_safe_profiles
-from src.persistence.checkpoints import delete_checkpoint_thread
+from src.services.tool_agent_runner import get_default_tool_agent_runner
 
 
 router = APIRouter(
@@ -29,7 +29,9 @@ router = APIRouter(
     dependencies=[Depends(require_gui_token)],
 )
 store = GuiStore()
-run_manager = RunManager(store)
+conversation_runner = get_default_tool_agent_runner()
+conversation_store = conversation_runner.store
+run_manager = RunManager(store, runner=conversation_runner)
 
 
 class SessionCreate(BaseModel):
@@ -141,6 +143,11 @@ def create_session(request: SessionCreate) -> dict:
         recursion_limit=request.recursion_limit,
         graph_entrypoint=_validate_graph(request.graph_entrypoint),
     )
+    try:
+        conversation_store.ensure_session(record.id)
+    except Exception:
+        store.delete_session(record.id)
+        raise
     return {"session": record.to_dict()}
 
 
@@ -149,7 +156,7 @@ def get_session(session_id: str) -> dict:
     record = _require_session(session_id)
     return {
         "session": record.to_dict(),
-        "messages": read_thread_messages(session_id),
+        "messages": read_thread_messages(session_id, conversation_store),
     }
 
 
@@ -173,6 +180,8 @@ async def patch_session(session_id: str, request: SessionPatch) -> dict:
         patch["graph_entrypoint"] = _validate_graph(
             patch["graph_entrypoint"]
         )
+    elif patch.get("archived") is False:
+        _validate_graph(current.graph_entrypoint)
 
     guarded = graph_changed or "archived" in patch
     try:
@@ -181,6 +190,7 @@ async def patch_session(session_id: str, request: SessionPatch) -> dict:
                 if graph_changed and await asyncio.to_thread(
                     read_thread_messages,
                     session_id,
+                    conversation_store,
                 ):
                     raise HTTPException(
                         status_code=409,
@@ -208,9 +218,18 @@ async def patch_session(session_id: str, request: SessionPatch) -> dict:
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str) -> dict:
+    if store.get_session(session_id) is None:
+        await asyncio.to_thread(
+            conversation_store.delete_session,
+            session_id,
+        )
+        return {"ok": True, "session_id": session_id, "already_deleted": True}
     try:
         async with run_manager.session_mutation(session_id):
-            await asyncio.to_thread(delete_checkpoint_thread, session_id)
+            await asyncio.to_thread(
+                conversation_store.delete_session,
+                session_id,
+            )
             deleted = await asyncio.to_thread(store.delete_session, session_id)
     except RunConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -221,9 +240,11 @@ async def delete_session(session_id: str) -> dict:
             status_code=500,
             detail=f"永久删除失败：{type(error).__name__}: {error}",
         ) from error
-    if not deleted:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    return {"ok": True, "session_id": session_id}
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "already_deleted": not deleted,
+    }
 
 
 @router.post("/sessions/{session_id}/runs")
@@ -283,11 +304,19 @@ async def cancel_run(run_id: str) -> dict:
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str) -> dict:
     handle = await run_manager.get(run_id)
-    if handle is None:
+    if handle is not None:
+        return {
+            "run_id": run_id,
+            "session_id": handle.session_id,
+            "status": handle.status,
+            "finished": handle.finished_event.is_set(),
+        }
+    record = await asyncio.to_thread(conversation_store.get_run, run_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="运行不存在")
     return {
-        "run_id": run_id,
-        "session_id": handle.session_id,
-        "status": handle.status,
-        "finished": handle.finished_event.is_set(),
+        "run_id": record.run_id,
+        "session_id": record.session_id,
+        "status": record.status,
+        "finished": record.status != "running",
     }
