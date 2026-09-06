@@ -93,29 +93,33 @@ def build_graph(
         )
 
         remaining_steps = state["remaining_steps"]
-        should_finalize = remaining_steps <= 3
+        should_finalize = remaining_steps <= 4
 
         system_parts = [
             prompt["system"],
             context_system,
         ]
+        finalize_message = None
 
         if should_finalize:
-            system_parts.append(
-                """
-    执行预算即将耗尽。
+            finalize_message = HumanMessage(
 
-    禁止继续调用任何工具。
-    请立即根据已经获得的信息返回阶段性调查结果。
-
-    必须包含：
-    1. 当前能够确认的结论
-    2. 支持结论的文件路径、工具结果或其他证据
-    3. 尚未完成或无法确认的部分
-    4. 如果继续调查，建议下一步做什么
-
-    不要因为任务没有完全完成而返回空结果。
-    """
+                content=(
+                    "系统通知：子 agent 的执行预算即将耗尽。\n"
+                    "现在禁止调用任何工具。\n"
+                    "请立即根据此前已有的工具结果输出阶段性调查报告。\n"
+                    "即使任务尚未完成，也必须输出非空内容。\n\n"
+                    "报告必须包含：\n"
+                    "1. 已确认的结论\n"
+                    "2. 对应证据、文件路径或工具结果\n"
+                    "3. 尚未确认的部分\n"
+                    "4. 建议的后续调查步骤"
+                ),
+                name="subagent_budget_controller",
+                additional_kwargs={
+                    "synthetic": True,
+                    "reason": "step_limit",
+                },
             )
 
         system_content = "\n\n".join(
@@ -129,6 +133,9 @@ def build_graph(
             },
             *messages_for_query,
         ]
+
+        if finalize_message is not None:
+            messages.append(finalize_message)
 
         retry_adapter = CompressionRetryAdapter(
             message_manage=message_manage,
@@ -151,6 +158,12 @@ def build_graph(
             turn_id=state["turn_id"],
             max_context_retries=3,
         )
+        new_messages = []
+        
+        if finalize_message is not None:
+            new_messages.append(finalize_message)
+
+        new_messages.append(response)
 
         if should_finalize:
             status = "partial"
@@ -163,7 +176,7 @@ def build_graph(
             stop_reason = ""
 
         return {
-            "messages": [response],
+            "messages": new_messages,
             "status": status,
             "stop_reason": stop_reason,
             "compression_session": (

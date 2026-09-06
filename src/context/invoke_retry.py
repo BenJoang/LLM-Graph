@@ -8,16 +8,24 @@ from src.context.message_context import mark_ai_message
 
 
 def is_context_overflow_error(e: Exception) -> bool:
-    body = getattr(e, "body", {}) or {}
-    message = str(body.get("message", "")) or str(e)
+    body = getattr(e, "body", None)
+
+    if isinstance(body, dict):
+        message = str(body.get("message", "")) or str(e)
+        param = body.get("param")
+    else:
+        message = str(body) if body else str(e)
+        param = None
+
+    normalized_message = message.lower()
 
     return (
         isinstance(e, BadRequestError)
         and getattr(e, "status_code", None) == 400
         and (
-            body.get("param") == "input_tokens"
-            or "maximum context length" in message
-            or "context length" in message
+            param == "input_tokens"
+            or "maximum context length" in normalized_message
+            or "context length" in normalized_message
         )
     )
 
